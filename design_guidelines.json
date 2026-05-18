@@ -1,0 +1,127 @@
+{
+  "project_context": {
+    "domain": "Political CRM / Voter Management Dashboard",
+    "theme": "light",
+    "archetype": "Archetype 4 (Swiss & High-Contrast)",
+    "rationale": "For an authoritative political CRM and analytics tool, high-contrast clarity is crucial. Admins need a 'command-center' feel, and field workers require maximum daylight legibility on mobile. We combine Stark White bases with Deep Navy for trust, accented with Vibrant Action Colors (Royal Blue, Signal Red) to track targets and voter issues effectively."
+  },
+  "color_system": {
+    "background": {
+      "page": "#FFFFFF",
+      "surface": "#FAFAFA",
+      "surface_elevated": "#F3F4F6",
+      "auth_overlay": "rgba(255, 255, 255, 0.95)"
+    },
+    "text": {
+      "primary": "#0A1128",
+      "secondary": "#4B5563",
+      "muted": "#9CA3AF",
+      "inverse": "#FFFFFF"
+    },
+    "borders": {
+      "default": "#E5E7EB",
+      "strong": "#D1D5DB",
+      "focus": "#2563EB"
+    },
+    "brand": {
+      "primary": "#2563EB",
+      "primary_hover": "#1D4ED8",
+      "secondary": "#0A1128"
+    },
+    "semantic": {
+      "success": "#16A34A",
+      "warning": "#F59E0B",
+      "danger": "#DC2626",
+      "info": "#0284C7"
+    },
+    "charts": [
+      "#2563EB",
+      "#0EA5E9",
+      "#F59E0B",
+      "#DC2626",
+      "#10B981"
+    ],
+    "hover_states": "Hover states must always explicitly define text color and use a 10-15% darker or lighter shade of the background to guarantee high contrast. e.g., hover:bg-slate-100 hover:text-slate-900"
+  },
+  "typography": {
+    "fonts": {
+      "headings": "Cabinet Grotesk, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-4xl sm:text-5xl font-bold tracking-tight text-slate-900",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900",
+      "h3": "text-xl font-medium tracking-tight text-slate-900",
+      "body": "text-base leading-relaxed text-slate-700",
+      "small": "text-sm text-slate-500",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-slate-500"
+    },
+    "rules": "Never use Inter for headings. Keep leading tight for headings (leading-none to leading-tight). Left-align dense data, center-align empty states or hero headers."
+  },
+  "layout_and_spacing": {
+    "grid_system": "MODE B: THE CONTROL ROOM GRID. Dashboards use grid-cols-1 md:grid-cols-3 lg:grid-cols-4 or lg:grid-cols-12 with tight gaps (gap-4 or gap-6).",
+    "spacing_scale": "Use generous internal padding for containers (p-6 or p-8) and tight gaps for data rows (gap-2 or gap-4).",
+    "nav_layout": "Desktop: Fixed left sidebar (w-64) with high-contrast active states. Mobile: Sticky bottom navigation for field workers.",
+    "surfaces": "Use 'Grid Borders (The Technical Look)' for data-heavy sections. Flat white backgrounds with crisp 1px borders (border-border). No soft shadows on data cards, use sharp utility borders or Neo-brutalist subtle 2px solid shadows if required."
+  },
+  "components_strategy": {
+    "cards": "Flat background, 1px subtle border, no heavy drop shadows. Hover effects should slightly lift (-translate-y-[1px]) and darken border color.",
+    "buttons": "Square or slightly rounded (rounded-md max). High contrast. Primary buttons must be solid Royal Blue with white text. Include distinct focus rings (focus:ring-2 focus:ring-blue-500 focus:ring-offset-2).",
+    "forms": "Survey forms use Shadcn UI with clear segmentations. Use Radio Groups and segmented controls over long dropdowns for mobile field workers. Inputs have crisp borders and distinct focus states.",
+    "tables": "Dense rows. High legibility. Alternate row colors (bg-white / bg-gray-50) for large voter lists. Include sticky headers.",
+    "charts": "Use Shadcn charts (Recharts) with the defined accessible semantic color palette. Avoid 3D charts.",
+    "icons": "Use Phosphor Icons (@phosphor-icons/react). Weight: 'regular' for standard, 'fill' for active states."
+  },
+  "interactions_and_motion": {
+    "transitions": "Fast and purposeful. 150ms-200ms ease-in-out for hovers and state changes.",
+    "feedback": "Use Sonner for toast notifications on survey submissions or status changes.",
+    "accessibility": "Respect prefers-reduced-motion. Ensure all focus states are clearly visible."
+  },
+  "media_and_assets": {
+    "login_background": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/6d1405d5-4f15-4625-bd75-d4c76e0ef2e1/images/840a270d09edfdc29cb6e1e3a28ef398024be30c7b78b582d054947a09a1d5cf.png",
+      "description": "Abstract geometric network map for the authentication screen background.",
+      "usage": "Use as a full-cover background image on the login page with a white/95 translucent overlay."
+    },
+    "auth_hero": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/6d1405d5-4f15-4625-bd75-d4c76e0ef2e1/images/73f55bfbd32ff4c6c5109401d532272ab4731d9f70832a33e51d8e9a5bfd156f.png",
+      "description": "High contrast top-down view of people representing data nodes.",
+      "usage": "Can be used as a hero graphic on the landing page or a decorative side-panel image on desktop login."
+    },
+    "avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3OTAxNjc0Mnww&ixlib=rb-4.1.0&q=85",
+        "description": "Admin User Avatar"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3OTAxNjc0Mnww&ixlib=rb-4.1.0&q=85",
+        "description": "Supervisor Avatar"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3OTAxNjc0Mnww&ixlib=rb-4.1.0&q=85",
+        "description": "Field Worker Avatar 1"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1607503873903-c5e95f80d7b9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc3OTAxNjc0Mnww&ixlib=rb-4.1.0&q=85",
+        "description": "Field Worker Avatar 2"
+      }
+    ]
+  },
+  "pages_and_views": {
+    "login": "Minimalist split-screen or centered card with abstract map background. Clear role-based tabs (Admin vs Field Worker).",
+    "booth_dashboard": "Control Room Grid. Top KPI strips for voter counts and targets. Main area contains worker assignments and visit schedules.",
+    "survey_forms": "Mobile-optimized. Large touch targets. Segmented logic: Basic Info -> Political Preference -> Issues.",
+    "analytics_dashboard": "Dense visual layout. Bar charts for demographics, line charts for engagement trends, sentiment analysis blocks.",
+    "admin_panel": "Grid borders layout. Table-heavy view for user and booth management. Crisp tabs to switch contexts."
+  },
+  "testing_attributes": {
+    "requirement": "CRITICAL: All interactive and key informational elements MUST include a data-testid attribute in kebab-case, describing its role.",
+    "examples": [
+      "data-testid='login-submit-button'",
+      "data-testid='booth-kpi-voter-count'",
+      "data-testid='nav-sidebar-analytics-link'",
+      "data-testid='survey-form-submit-button'"
+    ]
+  }
+}
