@@ -1155,7 +1155,7 @@ async def voter_slip_data(voter_id: str, user=Depends(get_current_user)):
         raise HTTPException(404, "Voter not found")
     if user["role"] == "worker" and v.get("booth_id") not in worker_booth_ids(user):
         raise HTTPException(403, "Not assigned to this booth")
-    booth = await db.booths.find_one({"id": v["booth_id"]}, {"_id": 0}) if v.get("booth_id") else None
+    booth = await db.booths.find_one({"id": v["booth_id"], "org_id": user["org_id"]}, {"_id": 0}) if v.get("booth_id") else None
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     settings = await db.settings.find_one({"org_id": user["org_id"]}, {"_id": 0})
     return {"voter": v, "booth": booth, "org": org, "settings": settings}

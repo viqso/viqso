@@ -1,74 +1,70 @@
-# VIQSO Digital Media — Political Voter CRM (Multi-Tenant)
+# VIQSO Digital Media — Political Voter CRM (Multi-Tenant SaaS)
 
 ## Problem Statement
-Build a political voter management CRM. Brand: **VIQSO Digital Media**. Then extended with:
-- Multi-tenant organization system (each client gets unique access key)
-- Bulk Excel import with smart merge
-- Family auto-detection + manual override
-- Advanced segregation by caste/religion/surname/family/age/gender etc.
-- Per-party branding (logo/colors/name)
-- Strict role + booth-scope enforcement
-- Brute-force protection
-- PWA / mobile-app-like experience
-- Super-admin console for master to create client orgs
+Multi-tenant SaaS Political CRM by VIQSO Digital Media. Each candidate/party gets their own customised app (logo, colors, candidate photo, voter data) under VIQSO's umbrella. Booth agents and admins work on data for their own ward/booths only.
 
 ## User Personas
-- **Super-Admin** (Master) — Creates client organizations, assigns access keys. Access via `/super-admin` + master key.
-- **Org Admin** — Full control within their organization (users, booths, voters, branding).
-- **Supervisor** — Manages assigned booths, can create visits, import voters.
-- **Field Worker** — Conducts surveys ONLY for their assigned booths.
+- **Super-Admin / VIQSO Master** — Creates client orgs at `/super-admin`, hands out access keys + login creds.
+- **Candidate Admin** (e.g. Abhishek Dubey) — Full org control: users, booths, voters, branding, candidate profile.
+- **Supervisor** — Manages assigned booths, schedules visits, runs bulk imports.
+- **Booth Agent** (Field Worker) — Surveys only assigned booths; can print/WhatsApp voter slips.
 
 ## Architecture
-- **Organizations** collection (id, name, party_name, access_key, active)
-- All other collections (users, booths, voters, visits, settings) have `org_id`
+- `organizations` collection — id, name, party_name, access_key, active
+- `org_id` on every record (users, booths, voters, visits, settings)
 - 3-factor login: `access_key + email + password`
-- JWT contains `org_id` → enforced on every query
-- Worker writes strictly checked against `assigned_booth_ids`
-- Brute-force: 5 failed logins by email → 15-min lockout
+- JWT contains `org_id` → enforced on every read/write
+- Per-org branding incl. **candidate profile** (photo, position, bio, constituency, election date, footer message)
+- `/slip/:voter_id` page renders printable card with party logo + candidate photo + voter+booth detail
+- WhatsApp share via `wa.me/{phone}?text=…` with prefilled Hindi/English template
 
-## Implementation Log
-### 2026-02-26 (iter-1): Initial single-tenant MVP
-- JWT auth, 7 resource groups, 5 analytics endpoints
-- 8 booths, 9 users, 120 voters, 15 visits seeded
-- Backend: 31/31 tests ✓
+## Iterations
+### iter-1 — Initial single-tenant MVP (31/31 ✓)
+JWT auth, booth/voter/visit CRUD, analytics, dashboard.
 
-### 2026-02-26 (iter-2): Multi-tenant + advanced features
-- **Multi-tenant org system** with access keys + strict isolation
-- **Bulk Excel import** (`/api/import/voters`, `/api/import/template`) with smart-merge by voter_id
-- **Family auto-detection** (address + surname) + manual override field
-- **Segregation views** — `/api/segregation/{group_by}` for caste, religion, surname, age, gender, occupation, preference, sentiment, booth, ward
-- **Families API** — `/api/families` returns grouped households
-- **Per-org branding** — `/api/settings` (GET public for login, PUT admin-only); color pickers + logo URL
-- **Super-admin endpoints** — `/api/orgs` CRUD with `X-Super-Admin-Key` header
-- **Brute-force lockout** — by email, 5 attempts → 15 min lockout
-- **Worker booth-scope enforcement** on POST/PATCH `/api/voters`
-- **PWA manifest** + theme-color + apple-touch-icon
-- **Super-admin console** at `/super-admin`
-- Backend: 56/56 tests ✓ (all regression + new)
+### iter-2 — Multi-tenant + advanced features (56/56 ✓)
+- Organization model + access keys + 3-factor login
+- Strict cross-org isolation + worker booth-scope enforcement on writes
+- Brute-force lockout (5/email/15 min)
+- Bulk Excel import (smart-merge by voter_id)
+- Segregation by caste/religion/surname/family/age/etc.
+- Family auto-detection (address + surname)
+- Per-org branding settings
+- Super-Admin console at `/super-admin`
+- PWA manifest + theme color
+
+### iter-3 — Candidate profile + Voter Slip + WhatsApp (69/69 ✓)
+- DEFAULT_SETTINGS extended: candidate_name, candidate_photo_url, candidate_position, candidate_bio, constituency_name, election_date, slip_footer_message, whatsapp_template
+- `POST /api/upload/image` — base64 data URL (max 2MB, image/* only)
+- `GET /api/voters/{id}/slip-data` — bundled voter + booth + org + settings
+- `/slip/:id` page — printable voter slip (A5 print layout) + WhatsApp share button
+- Voters list: per-row Slip + WhatsApp action buttons
+- Admin Branding tab: Candidate Profile section with photo upload
+- **AAP Sample Org seeded** — Abhishek Dubey, Ward 20 Mumbai, AAP, 5 booths, 45 voters, 3 booth agents
 
 ## Demo Credentials
-| Item | Value |
-|------|-------|
-| Default org access key | `VIQSO-2026` |
-| Admin | admin@crm.com / admin123 |
-| Supervisor | supervisor@crm.com / super123 |
-| Worker | worker@crm.com / worker123 |
-| Super-admin master key | `VIQSO-MASTER-2026-XKL9PQR4` (set via `X-Super-Admin-Key` header) |
+| Org | Access Key | Login |
+|-----|------------|-------|
+| VIQSO Demo | `VIQSO-2026` | admin@crm.com / admin123 (also supervisor@, worker@) |
+| AAP Ward 20 Mumbai | `AAP-MUM-W20-2026` | abhishek@aap.org / abhishek123 (agents: priya@, rohit@, anita@ / agent123) |
+| Super-Admin Master Key | `VIQSO-MASTER-2026-XKL9PQR4` | use as `X-Super-Admin-Key` header |
 
 ## Backlog (P0/P1/P2)
-### P1
-- Audit log for super-admin actions
-- Per-user password reset flow
-- API rate limiting (global)
+### P1 nice-to-haves
+- Modularize server.py (1633 lines → routers)
+- Image magic-byte validation on upload
+- Brute-force key by email only (currently uses ip+email; behind ingress IP varies)
+- Normalize /api/families response shape
 
-### P2
-- WhatsApp/SMS campaigns to surveyed voters
-- Voter slip PDF generation
+### P2 enhancements
+- Object storage for logos/photos (instead of base64 in settings doc)
+- WhatsApp Business API (programmatic send vs. wa.me link)
+- True PWA offline mode (service worker)
+- Voter slip PDF generation server-side
+- Multi-language survey form (Hindi/Marathi)
 - Geo-mapping of booths with heatmap
-- Multi-language survey form (Hindi/regional)
-- Service worker for true offline PWA mode
-- CSV export of segregation results
+- CSV export of segregation/analytics
 
 ## Next Tasks
-- User reviews initial output and provides guidance
-- Prioritize backlog based on campaign timeline
+- User reviews iter-3 output (AAP demo) and provides direction
+- Decide on P1/P2 prioritization
