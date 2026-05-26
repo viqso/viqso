@@ -13,6 +13,7 @@ import { toast } from "sonner";
 // Standalone page — requires X-Super-Admin-Key header. Accessed at /super-admin?key=...
 export default function SuperAdminPage() {
   const [superKey, setSuperKey] = useState(() => localStorage.getItem("super_admin_key") || "");
+  const [unlocked, setUnlocked] = useState(false);
   const [orgs, setOrgs] = useState([]);
   const [open, setOpen] = useState(false);
   const [created, setCreated] = useState(null);
@@ -20,20 +21,26 @@ export default function SuperAdminPage() {
     name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator",
   });
 
-  const load = async () => {
-    if (!superKey) return;
+  const load = async (key) => {
+    const k = key || superKey;
+    if (!k) return;
     try {
-      const res = await fetch(`${API}/orgs`, { headers: { "X-Super-Admin-Key": superKey } });
+      const res = await fetch(`${API}/orgs`, { headers: { "X-Super-Admin-Key": k } });
       if (!res.ok) throw new Error("Invalid key");
       const data = await res.json();
       setOrgs(data);
-      localStorage.setItem("super_admin_key", superKey);
+      setUnlocked(true);
+      localStorage.setItem("super_admin_key", k);
     } catch {
       toast.error("Invalid super-admin key");
+      setUnlocked(false);
     }
   };
 
-  useEffect(() => { if (superKey) load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    if (superKey) load(superKey);
+    // eslint-disable-next-line
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -48,7 +55,7 @@ export default function SuperAdminPage() {
       setCreated(data);
       toast.success("Organization created");
       setForm({ name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator" });
-      load();
+      load(superKey);
     } catch (err) {
       toast.error(String(err.message || err));
     }
@@ -63,7 +70,7 @@ export default function SuperAdminPage() {
       });
       if (!res.ok) throw new Error("Failed");
       toast.success(org.active ? "Org disabled" : "Org enabled");
-      load();
+      load(superKey);
     } catch {
       toast.error("Failed");
     }
@@ -74,7 +81,7 @@ export default function SuperAdminPage() {
     toast.success("Copied to clipboard");
   };
 
-  if (!superKey || orgs.length === 0 && !superKey) {
+  if (!unlocked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0B1020] p-6">
         <Card className="w-full max-w-md border-slate-200 p-6 shadow-2xl">
@@ -86,7 +93,7 @@ export default function SuperAdminPage() {
             Master access for VIQSO Digital Media. Enter your master key to manage all client organizations.
           </p>
           <form
-            onSubmit={(e) => { e.preventDefault(); load(); }}
+            onSubmit={(e) => { e.preventDefault(); load(superKey); }}
             className="mt-6 space-y-3"
           >
             <Label>Master Key</Label>
@@ -96,8 +103,9 @@ export default function SuperAdminPage() {
               onChange={(e) => setSuperKey(e.target.value)}
               placeholder="VIQSO-MASTER-…"
               className="font-mono"
+              data-testid="super-admin-key-input"
             />
-            <Button type="submit" className="w-full viqso-gradient text-white">
+            <Button type="submit" className="w-full viqso-gradient text-white" data-testid="super-admin-unlock-button">
               <KeyRound className="mr-2 h-4 w-4" /> Unlock
             </Button>
           </form>

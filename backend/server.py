@@ -242,8 +242,7 @@ class VisitUpdate(BaseModel):
 async def login(body: LoginInput, request: Request, response: Response):
     email = body.email.lower().strip()
     access_key = (body.access_key or "").strip()
-    client_ip = (request.client.host if request.client else "unknown")
-    identifier = f"{client_ip}:{email}"
+    identifier = f"login:{email}"
 
     if await is_locked_out(identifier):
         raise HTTPException(429, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
@@ -842,8 +841,8 @@ async def bulk_upload_voters(
     if "name" not in col_idx:
         raise HTTPException(400, "Missing required column: name")
 
-    # Preload booths by booth_number
-    booths_list = await db.booths.find({}, {"_id": 0}).to_list(2000)
+    # Preload booths by booth_number (scoped to user's org)
+    booths_list = await db.booths.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(2000)
     booth_by_num = {b["booth_number"]: b for b in booths_list}
 
     inserted = 0

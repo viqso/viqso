@@ -148,6 +148,22 @@ export default function LoginPage() {
 
           <form onSubmit={onSubmit} className="mt-8 space-y-4" data-testid="login-form">
             <div>
+              <Label htmlFor="access_key" className="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <KeyRound className="h-3 w-3" /> Organization Access Key
+              </Label>
+              <Input
+                id="access_key"
+                type="text"
+                required
+                value={accessKey}
+                onChange={(e) => setAccessKey(e.target.value)}
+                placeholder="e.g. VIQSO-2026"
+                className="mt-2 h-12 rounded-lg border-slate-300 font-mono uppercase tracking-wider focus:border-purple-500 focus:ring-purple-500"
+                data-testid="login-access-key-input"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">Provided by your campaign admin. Stored locally for next login.</p>
+            </div>
+            <div>
               <Label htmlFor="email" className="text-xs font-semibold uppercase tracking-wider text-slate-700">
                 Email
               </Label>

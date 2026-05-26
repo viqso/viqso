@@ -1,68 +1,74 @@
-# VIQSO Digital Media — Political Voter CRM
+# VIQSO Digital Media — Political Voter CRM (Multi-Tenant)
 
 ## Problem Statement
-Create a political voter management CRM with booth dashboard, survey forms, worker login, analytics and admin panel.
-Brand: **VIQSO Digital Media** (Connect · Create · Grow). Reference: Ranniti app aesthetic with vibrant gradient (blue → purple → pink → orange).
+Build a political voter management CRM. Brand: **VIQSO Digital Media**. Then extended with:
+- Multi-tenant organization system (each client gets unique access key)
+- Bulk Excel import with smart merge
+- Family auto-detection + manual override
+- Advanced segregation by caste/religion/surname/family/age/gender etc.
+- Per-party branding (logo/colors/name)
+- Strict role + booth-scope enforcement
+- Brute-force protection
+- PWA / mobile-app-like experience
+- Super-admin console for master to create client orgs
 
 ## User Personas
-- **Admin** — Full system access. Manages users, booths, all data.
-- **Supervisor** — Manages assigned booths and field workers. Read/update on booths and voters.
-- **Field Worker** — Conducts voter surveys on the ground for assigned booths only.
+- **Super-Admin** (Master) — Creates client organizations, assigns access keys. Access via `/super-admin` + master key.
+- **Org Admin** — Full control within their organization (users, booths, voters, branding).
+- **Supervisor** — Manages assigned booths, can create visits, import voters.
+- **Field Worker** — Conducts surveys ONLY for their assigned booths.
 
-## Core Requirements (static)
-- Multi-role JWT auth with bcrypt
-- Booth management (CRUD, target tracking, worker assignment)
-- Voter surveys (basic info + demographics + political preferences + issues + custom fields)
-- Visit scheduling (admin/supervisor create, workers complete)
-- Analytics (overview KPIs, demographics, sentiment, issues, booth-stats, 14-day trends)
-- Role-based data scoping (workers see only their booths)
-- Admin panel for user/booth management
-- Mobile-friendly survey form with multi-step wizard
+## Architecture
+- **Organizations** collection (id, name, party_name, access_key, active)
+- All other collections (users, booths, voters, visits, settings) have `org_id`
+- 3-factor login: `access_key + email + password`
+- JWT contains `org_id` → enforced on every query
+- Worker writes strictly checked against `assigned_booth_ids`
+- Brute-force: 5 failed logins by email → 15-min lockout
 
-## Implementation (2026-02-26 / iteration 1)
-### Backend (`/app/backend/server.py`)
-- JWT auth with cookie + Bearer header support
-- 7 resource groups: auth, users, booths, voters, visits, analytics, root
-- Auto-seeds on startup: 8 booths, 9 users (1 admin + 1 supervisor + 6 workers + worker login), 120 voters, 15 visits
-- 5 analytics endpoints with aggregations and worker-scope filtering
-- Pydantic models with UUID ids (no ObjectId leakage)
+## Implementation Log
+### 2026-02-26 (iter-1): Initial single-tenant MVP
+- JWT auth, 7 resource groups, 5 analytics endpoints
+- 8 booths, 9 users, 120 voters, 15 visits seeded
+- Backend: 31/31 tests ✓
 
-### Frontend (`/app/frontend/src`)
-- React 19 + react-router 7 + Shadcn UI + Recharts + Tailwind
-- VIQSO brand: dark navy + vibrant gradient (blue/purple/pink/orange) + Cabinet Grotesk typography
-- Pages: Login, Dashboard (Command Center), Booths, BoothDetail, Voters, SurveyForm (4-step wizard), Visits, Analytics, Admin
-- AuthContext with localStorage + cookie token sync
-- Mobile bottom nav + desktop sidebar
-- All interactive elements have `data-testid` attributes
-
-### Tested (iteration 1)
-- Backend: 31/31 pytest tests pass (100%)
-- Frontend: All pages render, all role-based flows working
-- Credentials verified: admin@crm.com / supervisor@crm.com / worker@crm.com
+### 2026-02-26 (iter-2): Multi-tenant + advanced features
+- **Multi-tenant org system** with access keys + strict isolation
+- **Bulk Excel import** (`/api/import/voters`, `/api/import/template`) with smart-merge by voter_id
+- **Family auto-detection** (address + surname) + manual override field
+- **Segregation views** — `/api/segregation/{group_by}` for caste, religion, surname, age, gender, occupation, preference, sentiment, booth, ward
+- **Families API** — `/api/families` returns grouped households
+- **Per-org branding** — `/api/settings` (GET public for login, PUT admin-only); color pickers + logo URL
+- **Super-admin endpoints** — `/api/orgs` CRUD with `X-Super-Admin-Key` header
+- **Brute-force lockout** — by email, 5 attempts → 15 min lockout
+- **Worker booth-scope enforcement** on POST/PATCH `/api/voters`
+- **PWA manifest** + theme-color + apple-touch-icon
+- **Super-admin console** at `/super-admin`
+- Backend: 56/56 tests ✓ (all regression + new)
 
 ## Demo Credentials
-| Role         | Email                | Password   |
-|--------------|----------------------|------------|
-| Admin        | admin@crm.com        | admin123   |
-| Supervisor   | supervisor@crm.com   | super123   |
-| Field Worker | worker@crm.com       | worker123  |
+| Item | Value |
+|------|-------|
+| Default org access key | `VIQSO-2026` |
+| Admin | admin@crm.com / admin123 |
+| Supervisor | supervisor@crm.com / super123 |
+| Worker | worker@crm.com / worker123 |
+| Super-admin master key | `VIQSO-MASTER-2026-XKL9PQR4` (set via `X-Super-Admin-Key` header) |
 
 ## Backlog (P0/P1/P2)
-### P1 — Improvements
-- Booth-scope check on POST/PATCH /api/voters and /api/visits for workers (API-level enforcement)
-- Rate limiting / brute-force lockout on /api/auth/login
-- Tighten CORS origins for production
+### P1
+- Audit log for super-admin actions
+- Per-user password reset flow
+- API rate limiting (global)
 
-### P2 — Future Enhancements
-- WhatsApp/SMS bulk messaging integration (engagement boost)
+### P2
+- WhatsApp/SMS campaigns to surveyed voters
 - Voter slip PDF generation
-- Family-grouping of voters
-- CSV import/export for voter rolls
-- Caste/community-wise targeting reports
-- Real-time push notifications to field workers
-- Geo-mapping of booths with heatmap overlay
-- Multi-language survey form (Hindi/regional languages)
+- Geo-mapping of booths with heatmap
+- Multi-language survey form (Hindi/regional)
+- Service worker for true offline PWA mode
+- CSV export of segregation results
 
 ## Next Tasks
-- Gather user feedback on initial output
+- User reviews initial output and provides guidance
 - Prioritize backlog based on campaign timeline
