@@ -3,27 +3,29 @@ import requests
 import pytest
 import uuid
 
+AK = "VIQSO-2026"
+
 # ---------- AUTH ----------
 class TestAuth:
     def test_login_admin_success(self, base_url):
-        r = requests.post(f"{base_url}/api/auth/login", json={"email": "admin@crm.com", "password": "admin123"})
+        r = requests.post(f"{base_url}/api/auth/login", json={"access_key": AK, "email": "admin@crm.com", "password": "admin123"})
         assert r.status_code == 200
         data = r.json()
         assert "access_token" in data and data["user"]["role"] == "admin"
         assert data["user"]["email"] == "admin@crm.com"
 
     def test_login_supervisor_success(self, base_url):
-        r = requests.post(f"{base_url}/api/auth/login", json={"email": "supervisor@crm.com", "password": "super123"})
+        r = requests.post(f"{base_url}/api/auth/login", json={"access_key": AK, "email": "supervisor@crm.com", "password": "super123"})
         assert r.status_code == 200
         assert r.json()["user"]["role"] == "supervisor"
 
     def test_login_worker_success(self, base_url):
-        r = requests.post(f"{base_url}/api/auth/login", json={"email": "worker@crm.com", "password": "worker123"})
+        r = requests.post(f"{base_url}/api/auth/login", json={"access_key": AK, "email": "worker@crm.com", "password": "worker123"})
         assert r.status_code == 200
         assert r.json()["user"]["role"] == "worker"
 
     def test_login_invalid_creds(self, base_url):
-        r = requests.post(f"{base_url}/api/auth/login", json={"email": "admin@crm.com", "password": "wrong"})
+        r = requests.post(f"{base_url}/api/auth/login", json={"access_key": AK, "email": "admin@crm.com", "password": "wrong"})
         assert r.status_code == 401
 
     def test_me_with_token(self, admin_client, base_url):

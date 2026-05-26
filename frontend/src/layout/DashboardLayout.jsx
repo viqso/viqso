@@ -10,17 +10,24 @@ import {
   Shield,
   LogOut,
   CalendarCheck,
+  Layers,
+  Home,
+  Upload,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Avatar, AvatarFallback } from "../components/ui/avatar";
-import { ViqsoLogo, ViqsoWordmark, VIQSO_LOGO_URL } from "../components/Brand";
+import { ViqsoWordmark } from "../components/Brand";
+import { useSettings } from "../context/SettingsContext";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "supervisor", "worker"] },
   { to: "/booths", label: "Booths", icon: MapPin, roles: ["admin", "supervisor", "worker"] },
   { to: "/voters", label: "Voters", icon: Users, roles: ["admin", "supervisor", "worker"] },
   { to: "/survey/new", label: "New Survey", icon: ClipboardList, roles: ["admin", "supervisor", "worker"] },
+  { to: "/segregate", label: "Segregate", icon: Layers, roles: ["admin", "supervisor", "worker"] },
+  { to: "/families", label: "Families", icon: Home, roles: ["admin", "supervisor", "worker"] },
   { to: "/visits", label: "Visits", icon: CalendarCheck, roles: ["admin", "supervisor", "worker"] },
+  { to: "/import", label: "Import Data", icon: Upload, roles: ["admin", "supervisor"] },
   { to: "/analytics", label: "Analytics", icon: BarChart3, roles: ["admin", "supervisor"] },
   { to: "/admin", label: "Admin Panel", icon: Shield, roles: ["admin"] },
 ];
@@ -39,6 +46,7 @@ const ROLE_BADGE_STYLE = {
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth();
+  const { settings } = useSettings();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -65,7 +73,9 @@ export default function DashboardLayout() {
         data-testid="sidebar"
       >
         <div className="flex h-20 items-center gap-3 border-b border-slate-200 px-6">
-          <img src={VIQSO_LOGO_URL} alt="VIQSO" className="h-11 w-11 rounded-lg object-cover" />
+          {settings?.logo_url && (
+            <img src={settings.logo_url} alt={settings.party_short_name} className="h-11 w-11 rounded-lg object-cover" />
+          )}
           <ViqsoWordmark size="md" />
         </div>
 
@@ -122,18 +132,26 @@ export default function DashboardLayout() {
         {/* Top bar */}
         <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-200 bg-white/80 px-4 backdrop-blur md:px-8">
           <div className="flex items-center gap-3 md:hidden">
-            <ViqsoLogo className="h-8 w-8" />
-            <span className="font-display font-extrabold viqso-gradient-text text-base">VIQSO</span>
+            {settings?.logo_url && (
+              <img src={settings.logo_url} alt={settings.party_short_name} className="h-8 w-8 rounded-lg object-cover" />
+            )}
+            <span className="font-display font-extrabold viqso-gradient-text text-base">{settings?.party_short_name || "VIQSO"}</span>
           </div>
           <div className="hidden md:block">
             <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">
-              VIQSO Digital Media · Campaign Command
+              {settings?.party_name || "VIQSO Digital Media"} · Campaign Command
             </div>
             <div className="font-display text-lg font-semibold text-slate-900">
               Welcome back, <span className="viqso-gradient-text">{user.name.split(" ")[0]}</span>
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {user.org_name && (
+              <div className="hidden sm:block rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px]">
+                <div className="font-bold uppercase tracking-wider text-slate-500">Org</div>
+                <div className="font-mono text-slate-900">{user.org_name}</div>
+              </div>
+            )}
             <span
               className={`inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r px-3 py-1 text-[11px] font-bold text-white shadow-sm ${ROLE_BADGE_STYLE[user.role]}`}
               data-testid="role-badge"

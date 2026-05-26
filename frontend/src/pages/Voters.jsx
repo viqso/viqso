@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../lib/api";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -28,10 +28,11 @@ const SENT_COLORS = {
 
 export default function VotersPage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [voters, setVoters] = useState([]);
   const [search, setSearch] = useState("");
-  const [pref, setPref] = useState("all");
-  const [sent, setSent] = useState("all");
+  const [pref, setPref] = useState(params.get("political_preference") || "all");
+  const [sent, setSent] = useState(params.get("sentiment") || "all");
   const [loading, setLoading] = useState(true);
 
   const load = async () => {

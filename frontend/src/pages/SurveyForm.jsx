@@ -328,6 +328,18 @@ export default function SurveyFormPage() {
               </div>
 
               <div>
+                <Label>Family ID (manual override)</Label>
+                <Input
+                  value={form.family_id || ""}
+                  onChange={(e) => set("family_id", e.target.value)}
+                  placeholder="Leave blank for auto (address + surname)"
+                  className="font-mono text-xs"
+                  data-testid="family-id-input"
+                />
+                <p className="mt-1 text-xs text-slate-500">Auto-detected from address + surname. Override to link voters to a specific family group.</p>
+              </div>
+
+              <div>
                 <Label className="mb-2 block">Custom Fields</Label>
                 <div className="space-y-2">
                   {Object.entries(form.custom_fields).map(([k, v]) => (

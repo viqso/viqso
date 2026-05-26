@@ -1,12 +1,12 @@
 import React, { useState } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useSettings } from "../context/SettingsContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { ArrowRight, ShieldCheck, Sparkles, Users, Vote } from "lucide-react";
+import { ArrowRight, ShieldCheck, Sparkles, Users, Vote, KeyRound } from "lucide-react";
 import { toast } from "sonner";
-import { ViqsoLogo, ViqsoWordmark, VIQSO_LOGO_URL } from "../components/Brand";
 
 const PRESETS = [
   { label: "Admin", email: "admin@crm.com", password: "admin123", accent: "from-orange-500 to-pink-500" },
@@ -14,8 +14,12 @@ const PRESETS = [
   { label: "Field Worker", email: "worker@crm.com", password: "worker123", accent: "from-blue-500 to-purple-500" },
 ];
 
+const DEMO_ACCESS_KEY = "VIQSO-2026";
+
 export default function LoginPage() {
   const { user, login } = useAuth();
+  const { settings, refresh: refreshSettings } = useSettings();
+  const [accessKey, setAccessKey] = useState(() => localStorage.getItem("last_access_key") || "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -27,12 +31,13 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(email, password);
-      toast.success("Welcome to VIQSO");
+      await login(accessKey, email, password);
+      await refreshSettings();
+      toast.success(`Welcome to ${settings?.party_short_name || "VIQSO"}`);
       navigate("/dashboard");
     } catch (err) {
       const msg = err.response?.data?.detail || "Login failed";
-      toast.error(typeof msg === "string" ? msg : "Login failed");
+      toast.error(typeof msg === "string" ? msg : "Login failed — check access key, email, password");
     } finally {
       setLoading(false);
     }
@@ -56,8 +61,17 @@ export default function LoginPage() {
 
         {/* Content */}
         <div className="relative z-10 flex items-center gap-3">
-          <img src={VIQSO_LOGO_URL} alt="VIQSO" className="h-12 w-12 rounded-xl object-cover" style={{ transform: "scale(1)" }} />
-          <ViqsoWordmark size="md" />
+          {settings?.logo_url && (
+            <img src={settings.logo_url} alt={settings.party_short_name} className="h-12 w-12 rounded-xl object-cover" />
+          )}
+          <div className="leading-none">
+            <div className="font-display text-2xl font-extrabold tracking-tight viqso-gradient-text">
+              {settings?.party_short_name || "VIQSO"}
+            </div>
+            <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
+              {settings?.party_name?.replace(settings?.party_short_name || "", "").trim() || "Digital Media"}
+            </div>
+          </div>
         </div>
 
         <div className="relative z-10">
@@ -65,11 +79,11 @@ export default function LoginPage() {
             <Sparkles className="h-3 w-3" /> Political CRM Platform
           </div>
           <h1 className="mt-5 font-display text-5xl font-bold leading-[1.05] tracking-tight">
-            Win every <br />
-            <span className="viqso-gradient-text">booth.</span>
+            {settings?.campaign_slogan?.split(" ").slice(0, -1).join(" ") || "Win every"} <br />
+            <span className="viqso-gradient-text">{settings?.campaign_slogan?.split(" ").slice(-1)[0] || "booth."}</span>
           </h1>
           <p className="mt-5 max-w-md text-base leading-relaxed text-slate-300">
-            Precision-built election campaign CRM by VIQSO Digital Media. Manage
+            Precision-built election campaign CRM by {settings?.party_name || "VIQSO Digital Media"}. Manage
             booths, run voter surveys, and command real-time analytics — all from
             one operations console.
           </p>
@@ -109,8 +123,17 @@ export default function LoginPage() {
       <div className="flex items-center justify-center bg-gradient-to-br from-white via-white to-slate-50 p-6 lg:col-span-3 lg:p-12">
         <div className="w-full max-w-md">
           <div className="mb-8 lg:hidden flex items-center gap-3">
-            <ViqsoLogo className="h-10 w-10" />
-            <ViqsoWordmark size="md" />
+            {settings?.logo_url && (
+              <img src={settings.logo_url} alt={settings.party_short_name} className="h-10 w-10 rounded-lg object-cover" />
+            )}
+            <div className="leading-none">
+              <div className="font-display text-xl font-extrabold viqso-gradient-text">
+                {settings?.party_short_name || "VIQSO"}
+              </div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500">
+                {settings?.party_name?.replace(settings?.party_short_name || "", "").trim() || "Digital Media"}
+              </div>
+            </div>
           </div>
 
           <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-600">
@@ -162,7 +185,7 @@ export default function LoginPage() {
             >
               <span className="absolute inset-0 viqso-gradient" />
               <span className="relative flex items-center justify-center font-semibold">
-                {loading ? "Signing in..." : "Sign in to VIQSO"}
+                {loading ? "Signing in..." : `Sign in to ${settings?.party_short_name || "VIQSO"}`}
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
               </span>
             </Button>
@@ -179,6 +202,7 @@ export default function LoginPage() {
                   key={p.label}
                   type="button"
                   onClick={() => {
+                    setAccessKey(DEMO_ACCESS_KEY);
                     setEmail(p.email);
                     setPassword(p.password);
                   }}
@@ -201,7 +225,7 @@ export default function LoginPage() {
           </div>
 
           <div className="mt-8 text-center text-[10px] uppercase tracking-[0.28em] text-slate-400">
-            Connect · Create · Grow
+            {settings?.tagline || "Connect · Create · Grow"}
           </div>
         </div>
       </div>

@@ -6,6 +6,10 @@ const AuthContext = createContext(null);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [org, setOrg] = useState(() => {
+    const s = localStorage.getItem("org");
+    return s ? JSON.parse(s) : null;
+  });
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
@@ -23,11 +27,18 @@ export const AuthProvider = ({ children }) => {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = async (email, password) => {
-    const { data } = await api.post("/auth/login", { email, password });
+  const login = async (accessKey, email, password) => {
+    const { data } = await api.post("/auth/login", {
+      access_key: accessKey,
+      email,
+      password,
+    });
     localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("user", JSON.stringify(data.user));
+    localStorage.setItem("org", JSON.stringify(data.org));
+    localStorage.setItem("last_access_key", accessKey);
     setUser(data.user);
+    setOrg(data.org);
     return data.user;
   };
 
@@ -37,11 +48,13 @@ export const AuthProvider = ({ children }) => {
     } catch {}
     localStorage.removeItem("access_token");
     localStorage.removeItem("user");
+    localStorage.removeItem("org");
     setUser(null);
+    setOrg(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, setUser }}>
+    <AuthContext.Provider value={{ user, org, loading, login, logout, setUser }}>
       {children}
     </AuthContext.Provider>
   );

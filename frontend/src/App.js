@@ -3,6 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { SettingsProvider } from "./context/SettingsContext";
 import LoginPage from "./pages/Login";
 import DashboardLayout from "./layout/DashboardLayout";
 import DashboardPage from "./pages/Dashboard";
@@ -13,6 +14,10 @@ import SurveyFormPage from "./pages/SurveyForm";
 import AnalyticsPage from "./pages/Analytics";
 import AdminPage from "./pages/Admin";
 import VisitsPage from "./pages/Visits";
+import SegregatePage from "./pages/Segregate";
+import FamiliesPage from "./pages/Families";
+import ImportPage from "./pages/Import";
+import SuperAdminPage from "./pages/SuperAdmin";
 
 const ProtectedRoute = ({ children, roles }) => {
   const { user, loading } = useAuth();
@@ -31,41 +36,54 @@ const ProtectedRoute = ({ children, roles }) => {
 function App() {
   return (
     <div className="App">
-      <AuthProvider>
-        <BrowserRouter>
-          <Toaster richColors position="top-right" />
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <DashboardLayout />
-                </ProtectedRoute>
-              }
-            >
-              <Route index element={<Navigate to="/dashboard" replace />} />
-              <Route path="dashboard" element={<DashboardPage />} />
-              <Route path="booths" element={<BoothsPage />} />
-              <Route path="booths/:id" element={<BoothDetailPage />} />
-              <Route path="voters" element={<VotersPage />} />
-              <Route path="survey/new" element={<SurveyFormPage />} />
-              <Route path="survey/:id/edit" element={<SurveyFormPage />} />
-              <Route path="visits" element={<VisitsPage />} />
-              <Route path="analytics" element={<AnalyticsPage />} />
+      <SettingsProvider>
+        <AuthProvider>
+          <BrowserRouter>
+            <Toaster richColors position="top-right" />
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/super-admin" element={<SuperAdminPage />} />
               <Route
-                path="admin"
+                path="/"
                 element={
-                  <ProtectedRoute roles={["admin"]}>
-                    <AdminPage />
+                  <ProtectedRoute>
+                    <DashboardLayout />
                   </ProtectedRoute>
                 }
-              />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
+              >
+                <Route index element={<Navigate to="/dashboard" replace />} />
+                <Route path="dashboard" element={<DashboardPage />} />
+                <Route path="booths" element={<BoothsPage />} />
+                <Route path="booths/:id" element={<BoothDetailPage />} />
+                <Route path="voters" element={<VotersPage />} />
+                <Route path="survey/new" element={<SurveyFormPage />} />
+                <Route path="survey/:id/edit" element={<SurveyFormPage />} />
+                <Route path="visits" element={<VisitsPage />} />
+                <Route path="segregate" element={<SegregatePage />} />
+                <Route path="families" element={<FamiliesPage />} />
+                <Route path="analytics" element={<AnalyticsPage />} />
+                <Route
+                  path="import"
+                  element={
+                    <ProtectedRoute roles={["admin", "supervisor"]}>
+                      <ImportPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="admin"
+                  element={
+                    <ProtectedRoute roles={["admin"]}>
+                      <AdminPage />
+                    </ProtectedRoute>
+                  }
+                />
+              </Route>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </AuthProvider>
+      </SettingsProvider>
     </div>
   );
 }

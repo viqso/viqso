@@ -64,10 +64,10 @@
 
 /* VIQSO brand utilities */
 .viqso-gradient {
-    background: linear-gradient(135deg, #1E90FF 0%, #8B5CF6 35%, #EC4899 70%, #F97316 100%);
+    background: linear-gradient(135deg, var(--viqso-blue, #1E90FF) 0%, var(--viqso-purple, #8B5CF6) 35%, var(--viqso-pink, #EC4899) 70%, var(--viqso-orange, #F97316) 100%);
 }
 .viqso-gradient-text {
-    background: linear-gradient(135deg, #1E90FF 0%, #8B5CF6 35%, #EC4899 70%, #F97316 100%);
+    background: linear-gradient(135deg, var(--viqso-blue, #1E90FF) 0%, var(--viqso-purple, #8B5CF6) 35%, var(--viqso-pink, #EC4899) 70%, var(--viqso-orange, #F97316) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -82,7 +82,7 @@
     inset: 0;
     border-radius: inherit;
     padding: 1.5px;
-    background: linear-gradient(135deg, #1E90FF, #8B5CF6, #EC4899, #F97316);
+    background: linear-gradient(135deg, var(--viqso-blue, #1E90FF), var(--viqso-purple, #8B5CF6), var(--viqso-pink, #EC4899), var(--viqso-orange, #F97316));
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
             mask-composite: exclude;
@@ -106,7 +106,7 @@
     bottom: 4px;
     width: 3px;
     border-radius: 0 3px 3px 0;
-    background: linear-gradient(180deg, #1E90FF, #8B5CF6, #EC4899, #F97316);
+    background: linear-gradient(180deg, var(--viqso-blue, #1E90FF), var(--viqso-purple, #8B5CF6), var(--viqso-pink, #EC4899), var(--viqso-orange, #F97316));
 }
 .sidebar-link {
     @apply text-slate-500 hover:bg-slate-50 hover:text-slate-900;

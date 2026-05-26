@@ -1,0 +1,21 @@
+{
+  "short_name": "VIQSO",
+  "name": "VIQSO Digital Media — Voter CRM",
+  "description": "Political CRM with booth dashboard, voter surveys, and real-time analytics.",
+  "icons": [
+    {
+      "src": "https://customer-assets.emergentagent.com/job_voter-hub-8/artifacts/rg7ud3ts_0BA4CCC4-7B01-4184-9028-7E2B82C624DC.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0B1020",
+  "background_color": "#0B1020",
+  "scope": "/",
+  "categories": ["productivity", "business"],
+  "lang": "en-IN"
+}

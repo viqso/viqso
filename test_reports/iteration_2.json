@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 2 testing of VIQSO Voter CRM multi-tenant features. Backend: 56/56 pytest pass (31 regression from iter-1 + 25 new multi-tenant/auth/worker-scope/import/segregation/families/PWA tests). 3-factor login (access_key+email+password), org isolation, super-admin endpoints, worker booth-scope on writes, segregation/families/import all verified end-to-end. Frontend: Login + Dashboard + SuperAdmin tested. CRITICAL UI BUG FOUND: Login page is missing the access_key input field — only Email + Password are rendered. The accessKey React state exists and presets auto-fill it, but a real user has NO way to manually type an access key for a different organization. SuperAdmin gate works with master key; Organizations list page renders heading + 'New Organization' button but body shows empty (no org cards visible — likely a rendering bug since GET /api/orgs returns the default org and any created orgs successfully).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/login", "issue": "Brute-force lockout identifier is `{request.client.host}:{email}`. Behind the K8s ingress/preview proxy the source IP varies across requests, so 5-fails-from-same-(ip,email) is easy to circumvent. Recommend keying by email only (or also tracking X-Forwarded-For). Test still passed by sending many attempts until 5 hit the same proxy IP."},
+      {"endpoint": "/api/import/voters", "issue": "Line 846 `db.booths.find({})` loads booths WITHOUT org_id filter. If two orgs happen to share the same `booth_number` value, an admin's import could resolve to another org's booth_id and tag the new voter with admin's org_id but a foreign booth_id, corrupting isolation. Filter by `org_id` here."},
+      {"endpoint": "/api/families", "issue": "Response shape is `{families:[...], total_families:n}` (dict) while sibling list endpoints (/booths, /voters, /visits) return a plain array. Inconsistent for clients."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Login.jsx", "issue": "access_key input field is NOT rendered in the form. Only email + password fields exist. The `accessKey` state and PRESETS auto-fill make demo logins work, but a real user signing in to a NON-demo org has no UI to enter the access key. Per spec the field must be visible and labelled 'Access Key' / 'Organization Key'. Add an Input with data-testid='login-access-key-input' above the email field.", "selector": "form[data-testid=login-form]", "priority": "HIGH"},
+      {"component": "SuperAdmin.jsx", "issue": "After unlocking with master key, the Organizations list body is empty — neither the default org (VIQSO Demo Organization) nor any newly-created orgs render as cards/rows. Backend GET /api/orgs returns a populated list. Likely the list-rendering loop or fetch state is broken.", "selector": "/super-admin", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login", "issues": ["Without an access_key field, the form looks identical to a single-tenant login — users on the new multi-tenant system have no visual signal that they need an org key."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_voter_crm.py",
+    "/app/backend/tests/test_multitenant.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "FRONTEND: Add visible access_key Input to Login.jsx (data-testid='login-access-key-input', labelled 'Access Key' or 'Organization Key', bound to existing accessKey state). Required by spec.",
+    "FRONTEND: Fix /super-admin Organizations list — list body renders empty even though API returns data. Inspect SuperAdmin.jsx fetch & map.",
+    "BACKEND: Add org_id filter to booth lookup in `/api/import/voters` (server.py line 846) to prevent cross-org booth_number collisions from corrupting voter rows.",
+    "BACKEND: Strengthen brute-force lockout — key by email only (or include X-Forwarded-For), since client.host behind ingress is the proxy IP and varies request-to-request.",
+    "BACKEND (nice-to-have): Normalize `/api/families` response shape to a plain array like sibling endpoints, OR document the wrapper."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1427 lines — strongly recommend splitting into routers (auth, users, booths, voters, visits, analytics, import, segregation, settings, orgs).",
+    "Lockout identifier should not rely on `request.client.host` alone behind a proxy; key by email (and optionally honor X-Forwarded-For).",
+    "`/api/import/voters` queries booths without org_id (line 846). Filter by `org_id=user['org_id']` to maintain tenant isolation.",
+    "`require_super_admin` only checks a static header value — fine as a master-key gate, but no audit log of who used it. Consider logging super-admin actions.",
+    "JWT_SECRET is committed in backend/.env — fine for preview, but must be rotated per-environment in production.",
+    "Login.jsx renders access_key into state but no Input element — UI/state mismatch."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_voter_crm.py",
+    "/app/backend/tests/test_multitenant.py"
+  ],
+  "success_rate": {"backend": "100% (56/56)", "frontend": "60% (dashboard/superadmin-gate/login-via-preset work; access_key UI missing; org list empty)"},
+  "test_credentials": "Access Key VIQSO-2026 + admin@crm.com/admin123, supervisor@crm.com/super123, worker@crm.com/worker123. Super-Admin key: VIQSO-MASTER-2026-XKL9PQR4 (header X-Super-Admin-Key).",
+  "seed_data_creation": "Pytest created (then soft-disabled via DELETE /api/orgs/{id}) several `TEST_Org_*` organizations for isolation tests. Also created `TEST_*` voters/users which were cleaned up. login_attempts collection was flushed before each test run.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run regression with `pytest /app/backend/tests/ -v` (requires `mongosh voter_crm --eval \"db.login_attempts.deleteMany({})\"` before run if lockout was triggered). New test file /app/backend/tests/test_multitenant.py covers 3-factor login, brute-force, super-admin, multi-tenant isolation, worker-scope writes, import xlsx, segregation, families, and PWA manifest. Frontend access_key field and SuperAdmin org list are the two blockers — verify after main agent fix.",
+  "rca of the issue": "Login.jsx defines `accessKey` state at line 22 and includes it in onSubmit's `login(accessKey,...)` call, but the JSX form (lines 149-192) never renders an <Input> for it — only email + password are shown. Presets call setAccessKey to populate it invisibly, masking the missing field during demo flows. Fix: add <Input id='access_key' data-testid='login-access-key-input' value={accessKey} onChange={...} required /> as the first form field."
+}
