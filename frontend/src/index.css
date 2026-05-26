@@ -1,75 +1,43 @@
+@import url('https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@500;600;700;800;900&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-    margin: 0;
-    font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
-        "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-        sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-    font-family:
-        source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
-}
-
 @layer base {
     :root {
         --background: 0 0% 100%;
-        --foreground: 0 0% 3.9%;
+        --foreground: 222 39% 11%;
         --card: 0 0% 100%;
-        --card-foreground: 0 0% 3.9%;
+        --card-foreground: 222 39% 11%;
         --popover: 0 0% 100%;
-        --popover-foreground: 0 0% 3.9%;
-        --primary: 0 0% 9%;
-        --primary-foreground: 0 0% 98%;
-        --secondary: 0 0% 96.1%;
-        --secondary-foreground: 0 0% 9%;
-        --muted: 0 0% 96.1%;
-        --muted-foreground: 0 0% 45.1%;
-        --accent: 0 0% 96.1%;
-        --accent-foreground: 0 0% 9%;
-        --destructive: 0 84.2% 60.2%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 89.8%;
-        --input: 0 0% 89.8%;
-        --ring: 0 0% 3.9%;
-        --chart-1: 12 76% 61%;
-        --chart-2: 173 58% 39%;
-        --chart-3: 197 37% 24%;
-        --chart-4: 43 74% 66%;
-        --chart-5: 27 87% 67%;
-        --radius: 0.5rem;
-    }
-    .dark {
-        --background: 0 0% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 3.9%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 3.9%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 0 0% 14.9%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 14.9%;
-        --muted-foreground: 0 0% 63.9%;
-        --accent: 0 0% 14.9%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62.8% 30.6%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 14.9%;
-        --input: 0 0% 14.9%;
-        --ring: 0 0% 83.1%;
-        --chart-1: 220 70% 50%;
-        --chart-2: 160 60% 45%;
-        --chart-3: 30 80% 55%;
-        --chart-4: 280 65% 60%;
-        --chart-5: 340 75% 55%;
+        --popover-foreground: 222 39% 11%;
+        --primary: 264 80% 55%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 220 14% 96%;
+        --secondary-foreground: 222 39% 11%;
+        --muted: 220 14% 96%;
+        --muted-foreground: 220 9% 46%;
+        --accent: 264 80% 96%;
+        --accent-foreground: 264 80% 30%;
+        --destructive: 0 73% 51%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 220 13% 91%;
+        --input: 220 13% 91%;
+        --ring: 264 80% 55%;
+        --chart-1: 217 91% 60%;
+        --chart-2: 264 80% 55%;
+        --chart-3: 326 86% 56%;
+        --chart-4: 25 95% 53%;
+        --chart-5: 158 64% 52%;
+        --radius: 0.75rem;
+
+        /* VIQSO Brand Gradient stops */
+        --viqso-blue: #1E90FF;
+        --viqso-purple: #8B5CF6;
+        --viqso-pink: #EC4899;
+        --viqso-orange: #F97316;
+        --viqso-navy: #0B1020;
     }
 }
 
@@ -77,39 +45,88 @@ code {
     * {
         @apply border-border;
     }
-    body {
-        @apply bg-background text-foreground;
+    html, body {
+        font-family: 'IBM Plex Sans', system-ui, sans-serif;
+        @apply bg-background text-foreground antialiased;
+        -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, h4, h5 {
+        font-family: 'Cabinet Grotesk', 'IBM Plex Sans', sans-serif;
+        letter-spacing: -0.02em;
+    }
+    .font-display {
+        font-family: 'Cabinet Grotesk', sans-serif;
+    }
+    .font-mono {
+        font-family: 'JetBrains Mono', monospace;
     }
 }
 
-@layer base {
-    [data-debug-wrapper="true"] {
-        display: contents !important;
-    }
+/* VIQSO brand utilities */
+.viqso-gradient {
+    background: linear-gradient(135deg, #1E90FF 0%, #8B5CF6 35%, #EC4899 70%, #F97316 100%);
+}
+.viqso-gradient-text {
+    background: linear-gradient(135deg, #1E90FF 0%, #8B5CF6 35%, #EC4899 70%, #F97316 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+}
+.viqso-gradient-border {
+    position: relative;
+}
+.viqso-gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1.5px;
+    background: linear-gradient(135deg, #1E90FF, #8B5CF6, #EC4899, #F97316);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+}
+.viqso-glow {
+    box-shadow: 0 10px 40px -12px rgba(139, 92, 246, 0.45);
+}
+.kpi-card {
+    @apply relative bg-white border border-slate-200 rounded-xl p-6 transition-all duration-200 hover:border-slate-300 hover:-translate-y-[2px] hover:shadow-lg hover:shadow-slate-200/60;
+}
+.sidebar-link-active {
+    background: linear-gradient(135deg, rgba(30, 144, 255, 0.12) 0%, rgba(139, 92, 246, 0.12) 50%, rgba(236, 72, 153, 0.12) 100%);
+    @apply text-slate-900 font-semibold;
+}
+.sidebar-link-active::before {
+    content: "";
+    position: absolute;
+    left: -12px;
+    top: 4px;
+    bottom: 4px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(180deg, #1E90FF, #8B5CF6, #EC4899, #F97316);
+}
+.sidebar-link {
+    @apply text-slate-500 hover:bg-slate-50 hover:text-slate-900;
+}
 
-    [data-debug-wrapper="true"] > * {
-        margin-left: inherit;
-        margin-right: inherit;
-        margin-top: inherit;
-        margin-bottom: inherit;
-        padding-left: inherit;
-        padding-right: inherit;
-        padding-top: inherit;
-        padding-bottom: inherit;
-        column-gap: inherit;
-        row-gap: inherit;
-        gap: inherit;
-        border-left-width: inherit;
-        border-right-width: inherit;
-        border-top-width: inherit;
-        border-bottom-width: inherit;
-        border-left-style: inherit;
-        border-right-style: inherit;
-        border-top-style: inherit;
-        border-bottom-style: inherit;
-        border-left-color: inherit;
-        border-right-color: inherit;
-        border-top-color: inherit;
-        border-bottom-color: inherit;
-    }
+/* Glow ring for emphasis */
+.brand-ring {
+    background:
+        radial-gradient(60% 60% at 30% 40%, rgba(30, 144, 255, 0.35) 0%, transparent 60%),
+        radial-gradient(50% 50% at 70% 30%, rgba(139, 92, 246, 0.35) 0%, transparent 60%),
+        radial-gradient(40% 40% at 50% 80%, rgba(236, 72, 153, 0.35) 0%, transparent 60%),
+        radial-gradient(40% 40% at 80% 70%, rgba(249, 115, 22, 0.30) 0%, transparent 60%);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgb(203 213 225); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(148 163 184); }
+
+@layer base {
+    [data-debug-wrapper="true"] { display: contents !important; }
 }
