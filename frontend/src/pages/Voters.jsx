@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { Search, Plus, Filter } from "lucide-react";
+import { Search, Plus, Filter, Printer, MessageCircle } from "lucide-react";
 
 const PREF_COLORS = {
   supporter: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -122,13 +122,14 @@ export default function VotersPage() {
                 <th className="px-4 py-3 font-bold">Sentiment</th>
                 <th className="px-4 py-3 font-bold">Issues</th>
                 <th className="px-4 py-3 font-bold">Surveyed</th>
+                <th className="px-4 py-3 font-bold text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">Loading…</td></tr>
               ) : voters.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No voters found.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">No voters found.</td></tr>
               ) : voters.map((v, idx) => (
                 <tr
                   key={v.id}
@@ -163,6 +164,30 @@ export default function VotersPage() {
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-500">
                     {v.surveyed_at ? new Date(v.surveyed_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => navigate(`/slip/${v.id}`)}
+                        className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 transition-colors hover:border-purple-400 hover:bg-purple-50 hover:text-purple-700"
+                        title="Print voter slip"
+                        data-testid={`slip-button-${v.id}`}
+                      >
+                        <Printer className="inline h-3 w-3" />
+                      </button>
+                      {v.phone && (
+                        <a
+                          href={`https://wa.me/${v.phone.replace(/\D/g, "")}?text=${encodeURIComponent(`Namaste ${v.name}, aapki voter slip: ${window.location.origin}/slip/${v.id}`)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-emerald-700 transition-colors hover:border-emerald-400 hover:bg-emerald-50"
+                          title="WhatsApp voter slip"
+                          data-testid={`whatsapp-button-${v.id}`}
+                        >
+                          <MessageCircle className="inline h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

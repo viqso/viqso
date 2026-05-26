@@ -1,0 +1,46 @@
+{
+  "summary": "Iter-3 testing of VIQSO Voter CRM: candidate profile, voter slip, image upload, AAP sample org. Backend: 69/69 pytest pass (56 iter-1/2 regression + 13 new iter-3). Frontend: AAP login (3-factor), Voters list (45 rows for AAP), Voter Slip /slip/{id} (party logo + candidate photo + bio + voter/booth details + Hindi footer + Print + WhatsApp buttons), Admin → Branding → Candidate Profile section, all verified end-to-end. Both iter-2 frontend blockers (access_key field, super-admin org list) are FIXED — access_key input is now visible on /login with data-testid='login-access-key-input'. No critical bugs found in iter-3.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/import/voters", "issue": "[CARRY-OVER from iter-2] Line ~846 `db.booths.find({})` still loads booths without org_id filter. If two orgs share a booth_number, an admin's import could resolve to another org's booth_id. Filter by org_id."},
+      {"endpoint": "/api/auth/login", "issue": "[CARRY-OVER from iter-2] Brute-force lockout keyed by `{request.client.host}:{email}`; behind ingress the source IP varies, weakening the 5-fail lockout. Recommend keying by email only and/or X-Forwarded-For."},
+      {"endpoint": "/api/families", "issue": "[CARRY-OVER] Returns dict `{families:[...],total_families:n}` while sibling list endpoints return plain arrays — inconsistent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter3.py",
+    "/app/backend/tests/test_multitenant.py",
+    "/app/backend/tests/test_voter_crm.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Nice-to-have) Add org_id filter in /api/import/voters booth lookup to prevent cross-tenant booth_number collisions.",
+    "(Nice-to-have) Strengthen brute-force lockout: key by email only, honor X-Forwarded-For.",
+    "(Nice-to-have) Normalize /api/families response shape to plain array.",
+    "(Code quality) server.py is 1633 lines — split into routers (auth/users/booths/voters/visits/analytics/import/segregation/settings/orgs/upload/slip)."
+  ],
+  "critical_code_review_comments": [
+    "POST /api/upload/image base64-encodes image inline and returns a data URL stored in settings. For party logos / candidate photos this stuffs hundreds of KB into the settings document and into every GET /api/settings response. At scale recommend object storage (S3/local fs) + URL reference. Acceptable for MVP.",
+    "GET /api/voters/{id}/slip-data does not filter booth lookup by org_id (line 1158: `db.booths.find_one({'id': v['booth_id']})`). Since voter is already org-scoped this is functionally safe, but defense-in-depth would add org_id to all sub-queries.",
+    "DEFAULT_SETTINGS still mutated via `dict(DEFAULT_SETTINGS)` at multiple sites — fine, but if a candidate_* field is added later, ensure migration for existing orgs (currently new fields just appear as None / empty for old orgs).",
+    "server.py size (1633 lines) is past the 700-line threshold — strongly recommend modularization before adding more endpoints.",
+    "Image upload accepts any image/* content_type from the client; consider also validating magic bytes (PIL or imghdr) to reject text/binary masquerading as image/png. Low priority."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter3.py (NEW — 13 iter-3 tests)"
+  ],
+  "success_rate": {"backend": "100% (69/69)", "frontend": "100% (login, AAP isolation, slip page, branding tab all working)"},
+  "test_credentials": "AAP: access_key=AAP-MUM-W20-2026, admin=abhishek@aap.org/abhishek123, agent=priya@aap.org/agent123. VIQSO: access_key=VIQSO-2026, admin=admin@crm.com/admin123, worker=worker@crm.com/worker123. Super-Admin master key: VIQSO-MASTER-2026-XKL9PQR4.",
+  "seed_data_creation": "Cleared db.login_attempts and removed 5 leftover TEST_ voters in VIQSO org (from prior iterations) so counts match the spec (120 VIQSO / 45 AAP). Iter-3 tests only create one TEST_iter3_bio settings field which is restored at test end. No persistent test data left behind.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run regression with `pytest /app/backend/tests/ -v`. If 429 lockout hit: clear with `python -c \"from pymongo import MongoClient; import os; from dotenv import load_dotenv; load_dotenv('/app/backend/.env'); MongoClient(os.environ['MONGO_URL'])[os.environ['DB_NAME']].login_attempts.delete_many({})\"`. AAP and VIQSO orgs are auto-seeded on app startup (seed_sample_client_org). Iter-3 file /app/backend/tests/test_iter3.py covers AAP login (3 tests), cross-org isolation (3), voter slip + worker scope (2), image upload validation (4), per-org settings PUT isolation (1).",
+  "rca of the issue": "N/A — no blocking issues found in iter-3. Both iter-2 frontend blockers (access_key field on Login.jsx, SuperAdmin organizations list) have been fixed by main agent and verified by playwright run on this iteration."
+}

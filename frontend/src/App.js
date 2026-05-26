@@ -18,6 +18,7 @@ import SegregatePage from "./pages/Segregate";
 import FamiliesPage from "./pages/Families";
 import ImportPage from "./pages/Import";
 import SuperAdminPage from "./pages/SuperAdmin";
+import VoterSlipPage from "./pages/VoterSlip";
 
 const ProtectedRoute = ({ children, roles }) => {
   const { user, loading } = useAuth();
@@ -43,6 +44,11 @@ function App() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/super-admin" element={<SuperAdminPage />} />
+              <Route path="/slip/:id" element={
+                <ProtectedRoute>
+                  <VoterSlipPage />
+                </ProtectedRoute>
+              } />
               <Route
                 path="/"
                 element={

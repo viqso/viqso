@@ -682,6 +682,15 @@ DEFAULT_SETTINGS = {
     "contact_email": "",
     "contact_phone": "",
     "campaign_slogan": "Win every booth",
+    # Candidate profile (for voter slip / WhatsApp)
+    "candidate_name": "",
+    "candidate_photo_url": "",
+    "candidate_position": "",  # e.g. "Corporator candidate"
+    "candidate_bio": "",
+    "constituency_name": "",  # e.g. "Ward 20, Mumbai"
+    "election_date": "",  # e.g. "15 Feb 2026"
+    "slip_footer_message": "Kripya apna matdaan zaroor karein",
+    "whatsapp_template": "",  # Optional custom template
 }
 
 class SettingsUpdate(BaseModel):
@@ -696,6 +705,14 @@ class SettingsUpdate(BaseModel):
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
     campaign_slogan: Optional[str] = None
+    candidate_name: Optional[str] = None
+    candidate_photo_url: Optional[str] = None
+    candidate_position: Optional[str] = None
+    candidate_bio: Optional[str] = None
+    constituency_name: Optional[str] = None
+    election_date: Optional[str] = None
+    slip_footer_message: Optional[str] = None
+    whatsapp_template: Optional[str] = None
 
 @api.get("/settings")
 async def get_settings(request: Request):
@@ -1112,6 +1129,38 @@ async def list_families(
     return {"total_families": len(result), "families": result[:limit]}
 
 
+# ---------- IMAGE UPLOAD (base64 data URL) ----------
+@api.post("/upload/image")
+async def upload_image(
+    file: UploadFile = File(...),
+    _user=Depends(require_roles("admin", "supervisor")),
+):
+    import base64
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "Only image files allowed")
+    content = await file.read()
+    if len(content) > 2 * 1024 * 1024:  # 2 MB
+        raise HTTPException(400, "Image too large (max 2 MB)")
+    b64 = base64.b64encode(content).decode("ascii")
+    data_url = f"data:{file.content_type};base64,{b64}"
+    return {"url": data_url, "size": len(content), "content_type": file.content_type}
+
+
+# ---------- VOTER SLIP ----------
+@api.get("/voters/{voter_id}/slip-data")
+async def voter_slip_data(voter_id: str, user=Depends(get_current_user)):
+    """Bundle voter + booth + org settings for slip rendering."""
+    v = await db.voters.find_one({"id": voter_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not v:
+        raise HTTPException(404, "Voter not found")
+    if user["role"] == "worker" and v.get("booth_id") not in worker_booth_ids(user):
+        raise HTTPException(403, "Not assigned to this booth")
+    booth = await db.booths.find_one({"id": v["booth_id"]}, {"_id": 0}) if v.get("booth_id") else None
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    settings = await db.settings.find_one({"org_id": user["org_id"]}, {"_id": 0})
+    return {"voter": v, "booth": booth, "org": org, "settings": settings}
+
+
 # ---------- ROOT ----------
 @api.get("/")
 async def root():
@@ -1404,9 +1453,166 @@ async def seed_data():
     logger.info(f"Seeded: {len(booths)} booths, {len(voters)} voters, {len(visits)} visits, {len(worker_ids)+2} users")
 
 
+async def seed_sample_client_org():
+    """Seed a realistic sample client org: Abhishek Dubey - AAP - Ward 20 Mumbai."""
+    AAP_ORG_ID = "aap-mumbai-w20-001"
+    AAP_ACCESS_KEY = "AAP-MUM-W20-2026"
+
+    if await db.organizations.find_one({"id": AAP_ORG_ID}):
+        return
+
+    # Org
+    await db.organizations.insert_one({
+        "id": AAP_ORG_ID,
+        "name": "Abhishek Dubey Campaign — Ward 20 Mumbai",
+        "party_name": "Aam Aadmi Party",
+        "access_key": AAP_ACCESS_KEY,
+        "active": True,
+        "created_at": now_iso(),
+    })
+
+    # Org-specific branding/candidate settings (AAP colors: blue + saffron yellow)
+    await db.settings.insert_one({
+        "id": "main",
+        "org_id": AAP_ORG_ID,
+        "party_name": "Aam Aadmi Party",
+        "party_short_name": "AAP",
+        "tagline": "Imaandari · Vikas · Suraksha",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/en/2/24/Aam_Aadmi_Party_logo.svg",
+        "primary_color": "#0033A0",
+        "secondary_color": "#1E90FF",
+        "accent_color": "#FFB81C",
+        "highlight_color": "#FF6B35",
+        "campaign_slogan": "Badlav Ki Aandhi",
+        "contact_email": "abhishek@aap.org",
+        "contact_phone": "+91-98200-00020",
+        "candidate_name": "Abhishek Dubey",
+        "candidate_photo_url": "https://images.unsplash.com/photo-1556157382-97eda2d62296?w=400&h=400&fit=crop&crop=faces",
+        "candidate_position": "Corporator Candidate",
+        "candidate_bio": "5 saal se Ward 20 ke vikas ke liye samarpit. Imaandar, jagrook, aapka apna.",
+        "constituency_name": "Ward 20 — Mumbai",
+        "election_date": "15 February 2026",
+        "slip_footer_message": "Kripya 15 February ko Aam Aadmi Party (jhaadu nishaan) par vote zaroor karein. Aapka ek vote, Ward 20 ka ujwal bhavishya.",
+        "whatsapp_template": "",
+        "created_at": now_iso(),
+    })
+
+    # Org admin (Abhishek)
+    await db.users.insert_one({
+        "id": str(uuid.uuid4()),
+        "email": "abhishek@aap.org",
+        "password_hash": hash_password("abhishek123"),
+        "name": "Abhishek Dubey",
+        "role": "admin",
+        "phone": "+91-98200-00020",
+        "booth_id": None,
+        "assigned_booth_ids": [],
+        "active": True,
+        "org_id": AAP_ORG_ID,
+        "created_at": now_iso(),
+    })
+
+    # Ward 20 booths (real Mumbai-style names)
+    polling_stations = [
+        ("B-2001", "Booth 2001 - St. Xavier's High School", "Cawasji Patel Road, Fort, Mumbai - 400001"),
+        ("B-2002", "Booth 2002 - Municipal Primary School", "Nagindas Master Road, Mumbai - 400001"),
+        ("B-2003", "Booth 2003 - Antonio Da Silva High School", "Dadar West, Mumbai - 400028"),
+        ("B-2004", "Booth 2004 - Lions Community Hall", "Marine Lines, Mumbai - 400020"),
+        ("B-2005", "Booth 2005 - BMC Office Annex", "Mahapalika Marg, Mumbai - 400001"),
+    ]
+    booths_aap = []
+    for num, name, addr in polling_stations:
+        bid = str(uuid.uuid4())
+        booths_aap.append({
+            "id": bid,
+            "name": name,
+            "booth_number": num,
+            "ward": "Ward 20 - Mumbai",
+            "constituency": "Mumbai South",
+            "location": addr,
+            "target_voters": random.randint(900, 1400),
+            "supervisor_id": None,
+            "assigned_workers": [],
+            "org_id": AAP_ORG_ID,
+            "created_at": now_iso(),
+        })
+    await db.booths.insert_many([dict(b) for b in booths_aap])
+
+    # Booth Agents (workers) for Abhishek
+    agent_names = [
+        ("priya@aap.org", "Priya Mehta"),
+        ("rohit@aap.org", "Rohit Pawar"),
+        ("anita@aap.org", "Anita Joshi"),
+    ]
+    agent_ids = []
+    for i, (em, nm) in enumerate(agent_names):
+        wid = str(uuid.uuid4())
+        agent_ids.append(wid)
+        await db.users.insert_one({
+            "id": wid, "email": em,
+            "password_hash": hash_password("agent123"),
+            "name": nm, "role": "worker", "phone": f"+91-9820000{30+i}",
+            "booth_id": booths_aap[i % len(booths_aap)]["id"],
+            "assigned_booth_ids": [b["id"] for b in booths_aap[i % len(booths_aap):(i % len(booths_aap)) + 2]],
+            "active": True, "org_id": AAP_ORG_ID, "created_at": now_iso(),
+        })
+
+    # Mumbai-style sample voters for Ward 20
+    mumbai_first = ["Aarav", "Aisha", "Vikram", "Sneha", "Kunal", "Diya", "Rohan", "Tanvi", "Aryan", "Pari", "Siddharth", "Riya", "Pratik", "Anjali", "Rahul"]
+    mumbai_last = ["Patil", "Joshi", "Mehta", "Shah", "Desai", "Kulkarni", "Naik", "Bhosale", "Iyer", "Pandey", "Khan", "Sayed", "D'Souza", "Fernandes"]
+    addresses = [
+        "Flat 401, Mahatma Phule CHS, Bhuleshwar",
+        "Room 12, Bhatia Bldg, Chira Bazaar",
+        "Plot 23, Princess Street",
+        "B-1402, Sea Pearl Apartments, Marine Drive",
+        "Shop 5, Crawford Market lane",
+        "House 8, Mehboob Studio Compound",
+        "Tower 3, JJ Hospital Quarters",
+    ]
+
+    aap_voters = []
+    for i in range(45):
+        booth = random.choice(booths_aap)
+        days_ago = random.randint(0, 7)
+        ts = (datetime.now(timezone.utc) - timedelta(days=days_ago, hours=random.randint(0, 23))).isoformat()
+        name = f"{random.choice(mumbai_first)} {random.choice(mumbai_last)}"
+        addr = random.choice(addresses)
+        surname = extract_surname(name)
+        family_id = auto_family_id(addr, surname)
+        aap_voters.append({
+            "id": str(uuid.uuid4()),
+            "booth_id": booth["id"],
+            "name": name,
+            "voter_id_number": f"MH{random.randint(10000000, 99999999)}",
+            "age": random.randint(18, 82),
+            "gender": random.choice(["male", "male", "female", "female", "other"]),
+            "address": addr,
+            "phone": f"+91-9{random.randint(800000000, 899999999)}",
+            "email": None,
+            "caste": random.choice(SAMPLE_CASTES),
+            "religion": random.choice(["Hindu", "Hindu", "Muslim", "Christian", "Buddhist"]),
+            "occupation": random.choice(SAMPLE_OCC),
+            "political_preference": random.choice(["supporter", "supporter", "neutral", "undecided"]),
+            "sentiment": random.choice(["positive", "positive", "neutral"]),
+            "issues": random.sample(SAMPLE_ISSUES, k=random.randint(1, 3)),
+            "likely_to_vote": random.choice([True, True, True, False]),
+            "notes": "",
+            "custom_fields": {},
+            "org_id": AAP_ORG_ID,
+            "surname": surname,
+            "family_id": family_id,
+            "surveyed_by": random.choice(agent_ids),
+            "surveyed_by_name": "Booth Agent",
+            "surveyed_at": ts,
+        })
+    await db.voters.insert_many(aap_voters)
+    logger.info(f"Seeded AAP sample org: {len(booths_aap)} booths, {len(aap_voters)} voters, {len(agent_ids)} agents")
+
+
 @app.on_event("startup")
 async def startup():
     await seed_data()
+    await seed_sample_client_org()
 
 @app.on_event("shutdown")
 async def shutdown():
