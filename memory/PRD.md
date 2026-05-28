@@ -1,22 +1,22 @@
 # VIQSO Digital Media — Political Voter CRM (Multi-Tenant SaaS)
 
 ## Problem Statement
-Multi-tenant SaaS Political CRM by VIQSO Digital Media. Each candidate/party gets their own customised app (logo, colors, candidate photo, voter data) under VIQSO's umbrella. Booth agents and admins work on data for their own ward/booths only.
+Multi-tenant SaaS Political CRM by VIQSO Digital Media. Each candidate/party gets their own customised, white-labeled app (logo, colors, candidate photo, voter data) under VIQSO's umbrella. Booth agents and admins work on data for their own ward/booths only.
 
 ## User Personas
-- **Super-Admin / VIQSO Master** — Creates client orgs at `/super-admin`, hands out access keys + login creds.
-- **Candidate Admin** (e.g. Abhishek Dubey) — Full org control: users, booths, voters, branding, candidate profile.
+- **Super-Admin / VIQSO Master** — Creates client orgs at `/super-admin`, hands out access keys + login creds. Can spin up time-limited DEMO orgs for sales presentations.
+- **Candidate Admin** — Full org control: users, booths, voters, branding, candidate profile.
 - **Supervisor** — Manages assigned booths, schedules visits, runs bulk imports.
-- **Booth Agent** (Field Worker) — Surveys only assigned booths; can print/WhatsApp voter slips.
+- **Booth Agent** — Surveys only assigned booths; can print/WhatsApp voter slips.
 
 ## Architecture
-- `organizations` collection — id, name, party_name, access_key, active
-- `org_id` on every record (users, booths, voters, visits, settings)
+- `organizations` collection — id, name, party_name, access_key, active, **is_demo, expires_at, watermark**
+- `org_id` on every record (users, booths, voters, visits, settings, audit_logs)
 - 3-factor login: `access_key + email + password`
 - JWT contains `org_id` → enforced on every read/write
-- Per-org branding incl. **candidate profile** (photo, position, bio, constituency, election date, footer message)
-- `/slip/:voter_id` page renders printable card with party logo + candidate photo + voter+booth detail
-- WhatsApp share via `wa.me/{phone}?text=…` with prefilled Hindi/English template
+- Per-org branding incl. candidate profile (photo, position, bio, constituency, election date, footer)
+- Demo orgs: backend hard-blocks ALL requests after `expires_at` (subscription expired)
+- Audit log on key actions; War Room live dashboard per org
 
 ## Iterations
 ### iter-1 — Initial single-tenant MVP (31/31 ✓)
@@ -24,47 +24,52 @@ JWT auth, booth/voter/visit CRUD, analytics, dashboard.
 
 ### iter-2 — Multi-tenant + advanced features (56/56 ✓)
 - Organization model + access keys + 3-factor login
-- Strict cross-org isolation + worker booth-scope enforcement on writes
+- Strict cross-org isolation + worker booth-scope enforcement
 - Brute-force lockout (5/email/15 min)
-- Bulk Excel import (smart-merge by voter_id)
-- Segregation by caste/religion/surname/family/age/etc.
-- Family auto-detection (address + surname)
-- Per-org branding settings
-- Super-Admin console at `/super-admin`
-- PWA manifest + theme color
+- Bulk Excel import, segregation, family auto-detection
+- Per-org branding settings, Super-Admin console, PWA manifest
 
 ### iter-3 — Candidate profile + Voter Slip + WhatsApp (69/69 ✓)
-- DEFAULT_SETTINGS extended: candidate_name, candidate_photo_url, candidate_position, candidate_bio, constituency_name, election_date, slip_footer_message, whatsapp_template
-- `POST /api/upload/image` — base64 data URL (max 2MB, image/* only)
-- `GET /api/voters/{id}/slip-data` — bundled voter + booth + org + settings
-- `/slip/:id` page — printable voter slip (A5 print layout) + WhatsApp share button
-- Voters list: per-row Slip + WhatsApp action buttons
-- Admin Branding tab: Candidate Profile section with photo upload
-- **AAP Sample Org seeded** — Abhishek Dubey, Ward 20 Mumbai, AAP, 5 booths, 45 voters, 3 booth agents
+- Candidate profile fields + image upload
+- `/slip/:id` printable voter slip + WhatsApp share
+- Voters list per-row Slip + WhatsApp action buttons
+- AAP Ward 20 Mumbai sample org seeded
 
-## Demo Credentials
+### iter-4 — Enterprise features (89/89 ✓ pytest + frontend verified) [2026-05-28]
+- **Demo Mode Orgs**: SuperAdmin can create demo orgs with `is_demo`, `expires_in_days`, custom `watermark`
+- **SuperAdmin UI**: New checkbox + conditional expiry/watermark inputs; DEMO badge + expiry date on org cards
+- **Login response enriched**: `/api/auth/login` now returns `is_demo`, `demo_expires_at`, `watermark` (mirrors `/api/auth/me`)
+- **PDF Voter Import**: `/api/import/voters-pdf` using pdfplumber/pdfminer.six
+- **Audit Logs**: `/api/audit-logs` per org
+- **War Room**: `/api/war-room/live` live dashboard
+- a11y: DialogDescription added to org-create dialog
+
+## Demo Credentials (see /app/memory/test_credentials.md)
 | Org | Access Key | Login |
 |-----|------------|-------|
-| VIQSO Demo | `VIQSO-2026` | admin@crm.com / admin123 (also supervisor@, worker@) |
-| AAP Ward 20 Mumbai | `AAP-MUM-W20-2026` | abhishek@aap.org / abhishek123 (agents: priya@, rohit@, anita@ / agent123) |
-| Super-Admin Master Key | `VIQSO-MASTER-2026-XKL9PQR4` | use as `X-Super-Admin-Key` header |
+| VIQSO Demo | `VIQSO-2026` | admin@crm.com / admin123 |
+| AAP Ward 20 Mumbai | `AAP-MUM-W20-2026` | abhishek@aap.org / abhishek123 |
+| iter-4 Demo Org | `VIQSO-WK2JHQACD5` | demo1@test.com / demo123 (expires 2026-05-31, watermark: SALES DEMO) |
+| Super-Admin Master Key | `VIQSO-MASTER-2026-XKL9PQR4` | header: X-Super-Admin-Key |
 
-## Backlog (P0/P1/P2)
-### P1 nice-to-haves
-- Modularize server.py (1633 lines → routers)
-- Image magic-byte validation on upload
-- Brute-force key by email only (currently uses ip+email; behind ingress IP varies)
-- Normalize /api/families response shape
+## Backlog
+### P1
+- White-label APK strategy (TWA/Bubblewrap wrap of PWA, or confirm dynamic PWA is sufficient)
+- Modularize server.py (1960 lines → routers/ split: auth, orgs, voters, booths, surveys, import_pdf, audit, warroom)
+- Backfill legacy orgs with `is_demo=false/watermark=null/expires_at=null` (cosmetic — UI already tolerates undefined)
+- Frontend visual integration of demo watermark overlay across the app (backend exposes it, UI overlay TBD)
+- PDF import: add `import_batch_id` on voters for one-click rollback of bad imports
+- Audit-logs pagination cursor (timestamp-based)
 
-### P2 enhancements
-- Object storage for logos/photos (instead of base64 in settings doc)
-- WhatsApp Business API (programmatic send vs. wa.me link)
+### P2
+- AI features via Emergent LLM Key: sentiment analysis on survey notes, issue clustering, speech-line suggestions
+- WhatsApp Business API (programmatic send vs wa.me link)
 - True PWA offline mode (service worker)
-- Voter slip PDF generation server-side
+- Server-side voter slip PDF generation
 - Multi-language survey form (Hindi/Marathi)
 - Geo-mapping of booths with heatmap
 - CSV export of segregation/analytics
 
 ## Next Tasks
-- User reviews iter-3 output (AAP demo) and provides direction
-- Decide on P1/P2 prioritization
+- User to review iter-4 (Demo Mode + PDF Import + Audit + War Room) and pick next priority
+- Likely candidates: APK wrapper, server.py modularization, or AI features

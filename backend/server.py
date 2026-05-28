@@ -286,6 +286,10 @@ async def login(body: LoginInput, request: Request, response: Response):
     response.set_cookie("access_token", token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
     user.pop("_id", None); user.pop("password_hash", None)
     user["org_name"] = org.get("name")
+    # Enrich with demo metadata (mirrors get_current_user enrichment so frontend can show watermark immediately)
+    user["is_demo"] = bool(org.get("is_demo"))
+    user["demo_expires_at"] = org.get("expires_at")
+    user["watermark"] = org.get("watermark", "DEMO") if org.get("is_demo") else None
     return {"user": user, "access_token": token, "org": {"id": org["id"], "name": org["name"], "party_name": org.get("party_name")}}
 
 @api.post("/auth/logout")

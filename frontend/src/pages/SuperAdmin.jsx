@@ -5,7 +5,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription,
 } from "../components/ui/dialog";
 import { Building2, Plus, KeyRound, Copy, ShieldAlert, Power } from "lucide-react";
 import { toast } from "sonner";
@@ -145,7 +145,12 @@ export default function SuperAdminPage() {
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-lg">
-              <DialogHeader><DialogTitle>Create new client organization</DialogTitle></DialogHeader>
+              <DialogHeader>
+                <DialogTitle>Create new client organization</DialogTitle>
+                <DialogDescription>
+                  Configure a new client org with a unique access key and admin account. Optionally enable Demo mode with expiry.
+                </DialogDescription>
+              </DialogHeader>
               {!created ? (
                 <form onSubmit={submit} className="space-y-3">
                   <div>
@@ -184,7 +189,7 @@ export default function SuperAdminPage() {
                       <span className="text-sm font-semibold text-amber-900">Create as Demo Organization</span>
                     </label>
                     <p className="text-[11px] text-amber-700 -mt-1">
-                      Demo orgs are view-only after expiry and show a watermark across the app. Useful for sales presentations.
+                      Demo orgs are fully disabled after expiry (all access blocked) and show a watermark across the app. Useful for time-limited sales presentations.
                     </p>
                     {form.is_demo && (
                       <div className="grid grid-cols-2 gap-3">
