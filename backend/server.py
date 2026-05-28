@@ -1488,6 +1488,7 @@ class OrgCreate(BaseModel):
     admin_name: str = "Administrator"
     is_demo: bool = False
     expires_in_days: Optional[int] = None
+    watermark: Optional[str] = None
 
 @api.get("/orgs")
 async def list_orgs(_=Depends(require_super_admin)):
@@ -1515,7 +1516,7 @@ async def create_org(body: OrgCreate, _=Depends(require_super_admin)):
         "active": True,
         "is_demo": bool(body.is_demo),
         "expires_at": expires_at,
-        "watermark": "DEMO PREVIEW" if body.is_demo else None,
+        "watermark": (body.watermark or "DEMO PREVIEW") if body.is_demo else None,
         "created_at": now_iso(),
     }
     await db.organizations.insert_one(org)

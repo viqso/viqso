@@ -1,0 +1,69 @@
+{
+  "summary": "Iter-4 backend (89/89 pytest) + frontend (Super Admin demo flow, AAP regression, War Room, Audit Logs, Voters list) all PASS. Verified demo org create/list/login payload, expiry enforcement, PDF voter import, audit-logs RBAC + cross-org isolation, war-room scoping. Found 2 minor product issues worth main-agent attention.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/login",
+        "issue": "Response 'user' object does NOT include is_demo / demo_expires_at / watermark fields. Only /api/auth/me returns them. Spec for iter-4 expected login payload to expose them so frontend can show watermark immediately after login without an extra request. Add the same enrichment block (lines ~100-115 in get_current_user) to the login response in /api/auth/login (around line 287-289)."
+      },
+      {
+        "endpoint": "GET /api/orgs (legacy seeded orgs)",
+        "issue": "Pre-iter-4 seeded orgs (e.g. VIQSO-2026, AAP-MUM-W20-2026) do NOT have is_demo / watermark / expires_at fields stored — these keys are entirely absent from the document. Frontend currently treats `undefined` as falsy so the UI works, but a one-time backfill migration (org.is_demo=false, watermark=null, expires_at=null) on app startup would make the data model consistent."
+      },
+      {
+        "endpoint": "Demo expiry enforcement",
+        "issue": "Expired orgs are FULLY BLOCKED (403 'Subscription expired' from get_current_user at server.py:100-110) on every authenticated endpoint, including reads. The SuperAdmin.jsx UI text claims 'Demo orgs are view-only after expiry' but server enforces hard-block, not view-only. Either (a) implement true view-only (allow GET, block POST/PATCH/DELETE) by moving the expiry check into the write-mutation paths only, or (b) update the UI copy to say 'fully disabled after expiry'."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Demo watermark display",
+        "issue": "Not validated visually — backend exposes watermark via /api/auth/me, frontend integration of the watermark overlay across the app was not directly screenshot-confirmed in this iteration. Recommended for next iteration if demo watermark UX is product-critical.",
+        "affected_selectors": []
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "SuperAdmin dialog",
+        "issues": ["Console warning: 'Missing `Description` or `aria-describedby` for DialogContent' — add DialogDescription for a11y compliance"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter4.py",
+    "/app/backend/tests/test_iter3.py",
+    "/app/backend/tests/test_multitenant.py",
+    "/app/backend/tests/test_voter_crm.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [
+    "Enrich /api/auth/login response with is_demo, demo_expires_at, watermark (currently only /auth/me has them)",
+    "Backfill legacy orgs (VIQSO/AAP) with is_demo=false, watermark=null, expires_at=null on startup OR update UI to tolerate missing keys (already tolerates)",
+    "Reconcile 'view-only after expiry' UI copy with actual hard-block behavior in get_current_user (server.py:100-110) — either implement view-only via per-route checks, or update copy",
+    "Add DialogDescription to SuperAdmin org-create dialog for a11y"
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1960 lines — past the 700-line guidance. Strongly recommend splitting into routers/ (auth.py, orgs.py, voters.py, booths.py, surveys.py, import_pdf.py, audit.py, warroom.py) and a shared deps.py for get_current_user / get_super_admin.",
+    "Demo expiry check at line 100-110 mixes business logic into the auth dependency. Cleaner to keep get_current_user purely about identity and add a separate require_active_subscription dependency that can be selectively applied or relaxed (for view-only reads).",
+    "PDF parsing inserts voters with `notes='Imported from PDF'` but does not record source filename, page count, or import_id. Add an import_batch_id field on voters so an admin can roll back a single bad PDF import.",
+    "Audit-logs endpoint accepts limit but no pagination cursor — for orgs with high write traffic this will become unusable. Add `before` / `after` timestamp cursors."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter4.py (new — 20 tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "100% (89/89 pytest)",
+    "frontend": "100% (Super Admin demo create, AAP login regression, Voters list, War Room, Audit Logs all verified)"
+  },
+  "test_credentials": "Read from /app/memory/test_credentials.md — Super Admin: VIQSO-MASTER-2026-XKL9PQR4; VIQSO: VIQSO-2026 / admin@crm.com / admin123; AAP: AAP-MUM-W20-2026 / abhishek@aap.org / abhishek123; Existing demo: VIQSO-WK2JHQACD5 / demo1@test.com / demo123",
+  "seed_data_creation": "Created several TEST_iter4_* orgs via the API for create/expiry tests. All marked active=False (soft-deleted via DELETE) at fixture teardown. PDF-imported voters and TEST_PDF_BOOTH/TEST_PDF_AUDIT booths hard-removed from MongoDB via autouse cleanup fixture to keep iter-3's strict VIQSO=120 voters count intact.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iter4.py covers Demo orgs (create/list/login/expiry), PDF import (/api/import/voters-pdf with ?booth_number=), audit logs (/api/audit-logs), war-room (/api/war-room/live). The autouse cleanup at the top of test_iter4.py removes PDF-imported voters from VIQSO to keep iter-3 strict counts (120) passing. If you add more iter-4 tests that mutate VIQSO data, mirror this cleanup. Login attempts table is wiped before each pytest run to avoid brute-force lockout from previous failed runs.",
+  "rca of the issue": "N/A — no functional bugs. Two product-spec deviations identified (login payload missing demo fields, 'view-only' UI copy vs hard-block server behavior) — see action_items."
+}

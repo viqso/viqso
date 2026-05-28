@@ -19,7 +19,7 @@ export default function SuperAdminPage() {
   const [created, setCreated] = useState(null);
   const [form, setForm] = useState({
     name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator",
-    is_demo: false, expires_in_days: "",
+    is_demo: false, expires_in_days: "", watermark: "",
   });
 
   const load = async (key) => {
@@ -46,16 +46,28 @@ export default function SuperAdminPage() {
   const submit = async (e) => {
     e.preventDefault();
     try {
+      const payload = {
+        name: form.name,
+        party_name: form.party_name,
+        admin_email: form.admin_email,
+        admin_password: form.admin_password,
+        admin_name: form.admin_name,
+        is_demo: !!form.is_demo,
+      };
+      if (form.is_demo) {
+        if (form.expires_in_days) payload.expires_in_days = parseInt(form.expires_in_days, 10);
+        if (form.watermark && form.watermark.trim()) payload.watermark = form.watermark.trim();
+      }
       const res = await fetch(`${API}/orgs`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Super-Admin-Key": superKey },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed");
       setCreated(data);
       toast.success("Organization created");
-      setForm({ name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator", is_demo: false, expires_in_days: "" });
+      setForm({ name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator", is_demo: false, expires_in_days: "", watermark: "" });
       load(superKey);
     } catch (err) {
       toast.error(String(err.message || err));
@@ -158,6 +170,50 @@ export default function SuperAdminPage() {
                     <Label>Admin Password (share with client)</Label>
                     <Input type="text" value={form.admin_password} onChange={(e) => setForm({ ...form, admin_password: e.target.value })} placeholder="min 6 chars" required />
                   </div>
+
+                  {/* Demo Mode Section */}
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.is_demo}
+                        onChange={(e) => setForm({ ...form, is_demo: e.target.checked })}
+                        className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                        data-testid="org-is-demo-checkbox"
+                      />
+                      <span className="text-sm font-semibold text-amber-900">Create as Demo Organization</span>
+                    </label>
+                    <p className="text-[11px] text-amber-700 -mt-1">
+                      Demo orgs are view-only after expiry and show a watermark across the app. Useful for sales presentations.
+                    </p>
+                    {form.is_demo && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs">Expires in (days)</Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            max="365"
+                            value={form.expires_in_days}
+                            onChange={(e) => setForm({ ...form, expires_in_days: e.target.value })}
+                            placeholder="e.g. 7"
+                            data-testid="org-expires-in-days-input"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Watermark Text</Label>
+                          <Input
+                            type="text"
+                            value={form.watermark}
+                            onChange={(e) => setForm({ ...form, watermark: e.target.value })}
+                            placeholder="DEMO PREVIEW"
+                            data-testid="org-watermark-input"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <DialogFooter>
                     <Button type="submit" className="viqso-gradient text-white">Create org + auto-generate access key</Button>
                   </DialogFooter>
@@ -201,6 +257,16 @@ export default function SuperAdminPage() {
                 <div>
                   <div className="font-display text-lg font-bold text-slate-900">{o.name}</div>
                   <div className="text-xs text-slate-500">{o.party_name}</div>
+                  {o.is_demo && (
+                    <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                      DEMO
+                      {o.expires_at && (
+                        <span className="font-mono font-normal opacity-80">
+                          · exp {new Date(o.expires_at).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${o.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
                   {o.active ? "ACTIVE" : "DISABLED"}
