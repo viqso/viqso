@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { API } from "../lib/api";
+import api from "../lib/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -24,19 +24,26 @@ export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) 
     // eslint-disable-next-line
   }, [open, org?.id]);
 
+  const _parseResponse = async (res) => {
+    // Clone first because some browser extensions / dev loggers may consume the original stream
+    let text = "";
+    try { text = await res.clone().text(); } catch { try { text = await res.text(); } catch { text = ""; } }
+    let data = {};
+    if (text) { try { data = JSON.parse(text); } catch { data = {}; } }
+    return data;
+  };
+
+  const _superHeaders = { "X-Super-Admin-Key": superKey };
+
   const loadConfig = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/orgs/${org.id}/apk-config`, {
-        headers: { "X-Super-Admin-Key": superKey },
-      });
-      if (!res.ok) throw new Error("Failed to load APK config");
-      const data = await res.json();
+      const { data } = await api.get(`/orgs/${org.id}/apk-config`, { headers: _superHeaders });
       setCfg(data);
       setPackageId(data.package_id || "");
       setFingerprint(data.signing_fingerprint || "");
     } catch (err) {
-      toast.error(String(err.message || err));
+      toast.error(err?.response?.data?.detail || err?.message || "Failed to load APK config");
     } finally {
       setLoading(false);
     }
@@ -45,17 +52,15 @@ export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) 
   const saveSettings = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API}/orgs/${org.id}/apk-settings`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", "X-Super-Admin-Key": superKey },
-        body: JSON.stringify({ package_id: packageId, signing_fingerprint: fingerprint }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Save failed");
+      await api.patch(
+        `/orgs/${org.id}/apk-settings`,
+        { package_id: packageId, signing_fingerprint: fingerprint },
+        { headers: _superHeaders }
+      );
       toast.success("APK settings saved");
       await loadConfig();
     } catch (err) {
-      toast.error(String(err.message || err));
+      toast.error(err?.response?.data?.detail || err?.message || "Save failed");
     } finally {
       setSaving(false);
     }
@@ -64,11 +69,11 @@ export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) 
   const downloadZip = async () => {
     setDownloading(true);
     try {
-      const res = await fetch(`${API}/orgs/${org.id}/apk-package`, {
-        headers: { "X-Super-Admin-Key": superKey },
+      const res = await api.get(`/orgs/${org.id}/apk-package`, {
+        headers: _superHeaders,
+        responseType: "blob",
       });
-      if (!res.ok) throw new Error("Download failed");
-      const blob = await res.blob();
+      const blob = res.data;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -79,7 +84,16 @@ export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) 
       URL.revokeObjectURL(url);
       toast.success("Bubblewrap project downloaded");
     } catch (err) {
-      toast.error(String(err.message || err));
+      // axios with responseType=blob returns error body as blob too — try to read it as text
+      let detail = err?.message || "Download failed";
+      const errBlob = err?.response?.data;
+      if (errBlob && typeof errBlob.text === "function") {
+        try {
+          const t = await errBlob.text();
+          detail = JSON.parse(t).detail || detail;
+        } catch { /* keep default */ }
+      }
+      toast.error(detail);
     } finally {
       setDownloading(false);
     }

@@ -44,6 +44,17 @@ JWT auth, booth/voter/visit CRUD, analytics, dashboard.
 - **War Room**: `/api/war-room/live` live dashboard
 - a11y: DialogDescription added to org-create dialog
 
+### iter-5 — White-label APK Builder (21/21 ✓ pytest + frontend verified) [2026-05-28]
+- **Per-org Bubblewrap TWA**: `_build_twa_manifest()` generates Bubblewrap-compatible `twa-manifest.json` baked with org's logo, theme color, party name, access_key auto-injected as start_url query param
+- **APK endpoints (super-admin only)**:
+  - `GET /api/orgs/{id}/apk-config` — returns full TWA manifest + PWABuilder deep-link
+  - `PATCH /api/orgs/{id}/apk-settings` — saves `apk_package_id` + `apk_signing_fingerprint` (SHA-256 validated)
+  - `GET /api/orgs/{id}/apk-package` — streams ZIP with twa-manifest.json + assetlinks.json + README + build.sh
+- **Public Digital Asset Links**: `GET /api/.well-known/assetlinks.json` — no-auth aggregator of all configured org packages (required for TWA to open without browser chrome)
+- **SuperAdmin UI — ApkBuilderDialog**: 3-step wizard with live app-icon preview, package_id + fingerprint config, Bubblewrap ZIP download, PWABuilder deep-link, DAL status indicator
+- **Public URL resolution**: PUBLIC_APP_URL env > X-Forwarded-Host > frontend/.env > request.base_url fallback (prevents internal cluster URL leak)
+- **Error UX fix**: Switched dialog from fetch() to axios — robust against browser-extension body-stream consumption; backend HTTPException details now surface correctly in toasts
+
 ## Demo Credentials (see /app/memory/test_credentials.md)
 | Org | Access Key | Login |
 |-----|------------|-------|
@@ -54,12 +65,14 @@ JWT auth, booth/voter/visit CRUD, analytics, dashboard.
 
 ## Backlog
 ### P1
-- White-label APK strategy (TWA/Bubblewrap wrap of PWA, or confirm dynamic PWA is sufficient)
-- Modularize server.py (1960 lines → routers/ split: auth, orgs, voters, booths, surveys, import_pdf, audit, warroom)
+- White-label APK strategy (TWA/Bubblewrap wrap of PWA, or confirm dynamic PWA is sufficient) **— DONE in iter-5**
+- Modularize server.py (~2100 lines → routers/ split: auth, orgs, voters, booths, surveys, import_pdf, audit, warroom, apk)
 - Backfill legacy orgs with `is_demo=false/watermark=null/expires_at=null` (cosmetic — UI already tolerates undefined)
 - Frontend visual integration of demo watermark overlay across the app (backend exposes it, UI overlay TBD)
 - PDF import: add `import_batch_id` on voters for one-click rollback of bad imports
 - Audit-logs pagination cursor (timestamp-based)
+- Fix iter-3 voter count drift (122 vs expected 120 in VIQSO seed)
+- Optional: route `/.well-known/assetlinks.json` (root) → `/api/.well-known/assetlinks.json` at hosting layer so TWA verification works out of the box
 
 ### P2
 - AI features via Emergent LLM Key: sentiment analysis on survey notes, issue clustering, speech-line suggestions
