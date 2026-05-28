@@ -7,8 +7,9 @@ import { Label } from "../components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription,
 } from "../components/ui/dialog";
-import { Building2, Plus, KeyRound, Copy, ShieldAlert, Power } from "lucide-react";
+import { Building2, Plus, KeyRound, Copy, ShieldAlert, Power, Smartphone } from "lucide-react";
 import { toast } from "sonner";
+import ApkBuilderDialog from "../components/ApkBuilderDialog";
 
 // Standalone page — requires X-Super-Admin-Key header. Accessed at /super-admin?key=...
 export default function SuperAdminPage() {
@@ -21,6 +22,7 @@ export default function SuperAdminPage() {
     name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator",
     is_demo: false, expires_in_days: "", watermark: "",
   });
+  const [apkOrg, setApkOrg] = useState(null);
 
   const load = async (key) => {
     const k = key || superKey;
@@ -305,9 +307,27 @@ export default function SuperAdminPage() {
                 <Power className="mr-2 h-3 w-3" />
                 {o.active ? "Disable org" : "Enable org"}
               </Button>
+              <Button
+                onClick={() => setApkOrg(o)}
+                size="sm"
+                className="mt-2 w-full bg-slate-900 text-white hover:bg-slate-800"
+                data-testid={`apk-build-button-${o.id}`}
+              >
+                <Smartphone className="mr-2 h-3 w-3" />
+                Build white-label APK
+              </Button>
             </Card>
           ))}
         </div>
+
+        {apkOrg && (
+          <ApkBuilderDialog
+            org={apkOrg}
+            superKey={superKey}
+            open={!!apkOrg}
+            onOpenChange={(v) => !v && setApkOrg(null)}
+          />
+        )}
       </div>
     </div>
   );

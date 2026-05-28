@@ -1,0 +1,46 @@
+{
+  "summary": "Iter-5 White-label APK Builder tested end-to-end. Backend: 21/21 new APK tests pass (test_iter5.py) covering apk-config, apk-settings PATCH validation, ZIP package generation, public assetlinks.json, super-admin gating, org-admin JWT rejection, 404 isolation. Full backend regression: 109/110 (1 pre-existing voter count drift in test_iter3 unrelated to iter-5). Frontend: SuperAdmin master-key unlock, Build APK button per org card, ApkBuilderDialog open + prefill (package_id + fingerprint), PWABuilder link uses PUBLIC URL (no internal cluster leak), valid save + toast, ZIP download via browser blob, AAP seed org restored. PUBLIC host correctly used in TWA manifest startUrl, host, fullScopeUrl and pwabuilder_url across both AAP and VIQSO demo orgs.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/voters (VIQSO org)", "issue": "Pre-existing: test_iter3.test_viqso_voters_count expects 120 but DB now has 122 voters. Likely seed leak from earlier iterations' PDF import / voter creation tests. Not caused by iter-5; flag for cleanup."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ApkBuilderDialog.saveSettings", "issue": "When backend returns 400 (e.g., invalid package_id 'Foo'), the error toast shows literal JS error 'Failed to execute json on Response: body stream already read' instead of the backend error detail like 'Invalid package_id. Use reverse-DNS like com.viqso.myparty'. User cannot tell why save failed. Root cause likely a duplicate body consumer (interceptor / strictmode dev side effect) or the response body is consumed by a logger before res.json() runs.", "selector": "[data-testid=apk-save-settings-button]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter5.py",
+    "/app/test_reports/pytest/iter5_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix ApkBuilderDialog error toast: in saveSettings (and downloadZip) read body as text first, then JSON.parse with try/catch, so backend 400 detail like 'Invalid package_id...' surfaces to the user. Likely root cause: a global fetch/response logger or React-StrictMode double consumption. Suggest: const text = await res.text(); const data = text ? (()=>{try{return JSON.parse(text)}catch{return {}}})() : {}; if (!res.ok) throw new Error(data.detail || 'Save failed');",
+    "Investigate why VIQSO org has 122 voters when iter-3 test seeded 120 (separate from iter-5; reset seed or update assertion)."
+  ],
+  "critical_code_review_comments": [
+    "ApkBuilderDialog.saveSettings/downloadZip — same anti-pattern: single res.json() without text fallback masks backend error details on non-2xx responses. Apply text-then-parse pattern.",
+    "ApkBuilderDialog.downloadZip — on non-2xx generic 'Download failed' is thrown regardless of cause; could surface backend detail similarly.",
+    "Backend apk-config correctly resolves PUBLIC URL via PUBLIC_APP_URL/X-Forwarded-Host fallback chain — verified no internal *.emergentcf.cloud leakage in pwabuilder_url, twa_manifest.host, startUrl or fullScopeUrl across AAP, VIQSO and throwaway orgs.",
+    "ZIP correctly bundles twa-manifest.json, .well-known/assetlinks.json, README.md, build.sh and embeds the configured packageId + fingerprint.",
+    "Public /api/.well-known/assetlinks.json correctly excludes orgs without configured fingerprint and includes configured ones — DAL aggregator works.",
+    "Authorization is solid: missing key → 403, wrong key → 403, org-admin JWT → 403 across all 3 endpoints."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter5.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 iter-5; 109/110 overall — 1 pre-existing iter-3 voter count drift)",
+    "frontend": "90% (all critical flows work; error toast for 400s shows wrong message)"
+  },
+  "test_credentials": "Super-admin key: VIQSO-MASTER-2026-XKL9PQR4. AAP login: abhishek@aap.org / abhishek123 / AAP-MUM-W20-2026. From /app/memory/test_credentials.md.",
+  "seed_data_creation": "Throwaway org TEST_iter5_apk_org_<uuid6> created and soft-deleted per test run. AAP seed org's apk_package_id and apk_signing_fingerprint verified restored to org.aap.ward20mumbai + original fingerprint after UI test run. No mutation of AAP/VIQSO seed APK config left behind.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter-5 APK Builder fully covered by /app/backend/tests/test_iter5.py (21 tests, all pass). One MEDIUM frontend bug: ApkBuilderDialog error toast shows 'body stream already read' instead of backend's 'Invalid package_id' detail on 400 responses. Fix pattern: switch fetch error path to res.text() then safe JSON.parse. AAP/VIQSO seed orgs APK config preserved. Pre-existing iter-3 voter count drift (120 expected vs 122 actual) is unrelated to iter-5.",
+  "rca_of_the_issue": "Frontend error toast bug — ApkBuilderDialog.saveSettings calls const data = await res.json(); res.json() is throwing 'body stream already read' on the 400 response. Two possible causes: (1) a logger/extension consumed the body, or (2) React 18 StrictMode in dev double-invokes the handler and the second invocation sees an already-consumed Response. Mitigation: read response as text first, then attempt JSON.parse, then check res.ok — this is robust against double-read and against non-JSON error bodies. The bug is medium severity because the save IS correctly prevented on the backend (400) but the user gets an unhelpful error message."
+}

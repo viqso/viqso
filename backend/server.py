@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from collections import Counter, defaultdict
-import os, uuid, logging, bcrypt, jwt, random
+import os, uuid, logging, bcrypt, jwt, random, io, zipfile, json as _json, re as _re
 
 # ---------- DB ----------
 mongo_url = os.environ['MONGO_URL']
@@ -1420,6 +1420,273 @@ async def org_manifest(request: Request, access_key: Optional[str] = None):
         "scope": "/",
         "lang": "en-IN",
     }
+
+
+# ---------- WHITE-LABEL APK BUILDER (Super Admin) ----------
+# Strategy: Generate a Bubblewrap TWA project bundle per org. Super-admin downloads
+# the ZIP, runs `bubblewrap build` locally (or uses PWABuilder.com) to get a signed APK.
+# Each org gets a unique packageId, branded launcher name, theme, and icon.
+
+def _slug(s: str) -> str:
+    """Convert arbitrary string into a safe Java package fragment."""
+    s = (s or "").lower()
+    s = _re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return s or "app"
+
+def _default_package_id(org: dict) -> str:
+    base = _slug(org.get("access_key", "") or org.get("name", "") or org.get("id", ""))
+    return f"com.viqso.{base}"
+
+async def _build_twa_manifest(org: dict, request: Request, package_id: Optional[str] = None,
+                              signing_fingerprint: Optional[str] = None) -> dict:
+    """Produce a Bubblewrap-compatible twa-manifest.json dict for the given org."""
+    settings_doc = await db.settings.find_one({"org_id": org["id"]}, {"_id": 0}) or dict(DEFAULT_SETTINGS)
+    party_name = settings_doc.get("party_name") or org.get("party_name") or "Voter CRM"
+    short = settings_doc.get("party_short_name") or party_name[:12]
+    logo = settings_doc.get("logo_url") or DEFAULT_SETTINGS.get("logo_url") or ""
+    theme = settings_doc.get("primary_color") or "#0B1020"
+    bg = settings_doc.get("background_color") or "#FFFFFF"
+
+    # Host must be the PUBLIC PWA URL (for TWA Digital Asset Links verification).
+    # Priority: PUBLIC_APP_URL env > X-Forwarded-Host header > frontend/.env > request.base_url
+    public_url = os.environ.get("PUBLIC_APP_URL", "").rstrip("/")
+    if not public_url:
+        fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+        if fwd_host and "cluster" not in fwd_host and "localhost" not in fwd_host:
+            public_url = f"https://{fwd_host}"
+    if not public_url:
+        # Read from frontend/.env as last resort
+        try:
+            fe_env = Path(__file__).parent.parent / "frontend" / ".env"
+            if fe_env.exists():
+                for line in fe_env.read_text().splitlines():
+                    if line.startswith("REACT_APP_BACKEND_URL="):
+                        public_url = line.split("=", 1)[1].strip().rstrip("/")
+                        break
+        except Exception:
+            pass
+    if not public_url:
+        public_url = str(request.base_url).rstrip("/")
+
+    host_only = public_url.replace("https://", "").replace("http://", "").split("/")[0]
+
+    pkg = package_id or org.get("apk_package_id") or _default_package_id(org)
+    fp = signing_fingerprint or org.get("apk_signing_fingerprint") or ""
+
+    # If logo is a data: URL or absolute http(s), preserve it. Else prefix with public host.
+    icon_url = logo if (logo.startswith("data:") or logo.startswith("http")) else f"{public_url}{logo or '/logo192.png'}"
+
+    return {
+        "packageId": pkg,
+        "host": host_only,
+        "name": f"{party_name} — Voter CRM",
+        "launcherName": short,
+        "display": "standalone",
+        "themeColor": theme,
+        "navigationColor": theme,
+        "navigationColorDark": theme,
+        "navigationDividerColor": theme,
+        "navigationDividerColorDark": theme,
+        "backgroundColor": bg,
+        "enableNotifications": False,
+        "startUrl": f"/?ak={org.get('access_key', '')}",
+        "iconUrl": icon_url,
+        "maskableIconUrl": icon_url,
+        "monochromeIconUrl": "",
+        "shortcuts": [],
+        "generatorApp": "viqso-saas",
+        "webManifestUrl": f"{public_url}/api/manifest?access_key={org.get('access_key', '')}",
+        "fallbackType": "customtabs",
+        "features": {"locationDelegation": {"enabled": False}, "playBilling": {"enabled": False}},
+        "alphaDependencies": {"enabled": False},
+        "enableSiteSettingsShortcut": True,
+        "isChromeOSOnly": False,
+        "isMetaQuest": False,
+        "fullScopeUrl": f"{public_url}/",
+        "minSdkVersion": 21,
+        "orientation": "portrait",
+        "fingerprints": [{"name": "android", "value": fp}] if fp else [],
+        "additionalTrustedOrigins": [],
+        "retainedBundles": [],
+        "appVersionName": "1.0.0",
+        "appVersionCode": 1,
+        "shareTarget": None,
+        "splashScreenFadeOutDuration": 300,
+        "signingKey": {"path": "./android.keystore", "alias": "android"},
+        "_viqso": {
+            "org_id": org["id"],
+            "org_name": org.get("name"),
+            "access_key": org.get("access_key"),
+            "generated_at": now_iso(),
+        },
+    }
+
+class ApkSettings(BaseModel):
+    package_id: Optional[str] = None
+    signing_fingerprint: Optional[str] = None  # SHA-256, colon-separated
+
+@api.get("/orgs/{org_id}/apk-config")
+async def get_apk_config(org_id: str, request: Request, _=Depends(require_super_admin)):
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0})
+    if not org:
+        raise HTTPException(404, "Org not found")
+    manifest = await _build_twa_manifest(org, request)
+    return {
+        "org_id": org_id,
+        "package_id": manifest["packageId"],
+        "host": manifest["host"],
+        "launcher_name": manifest["launcherName"],
+        "theme_color": manifest["themeColor"],
+        "start_url": manifest["startUrl"],
+        "signing_fingerprint": org.get("apk_signing_fingerprint", ""),
+        "twa_manifest": manifest,
+        "pwabuilder_url": f"https://www.pwabuilder.com/reportcard?site={manifest['fullScopeUrl']}",
+    }
+
+@api.patch("/orgs/{org_id}/apk-settings")
+async def update_apk_settings(org_id: str, body: ApkSettings, _=Depends(require_super_admin)):
+    org = await db.organizations.find_one({"id": org_id})
+    if not org:
+        raise HTTPException(404, "Org not found")
+    updates = {}
+    if body.package_id is not None:
+        pid = body.package_id.strip()
+        if pid and not _re.match(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$", pid):
+            raise HTTPException(400, "Invalid package_id. Use reverse-DNS like com.viqso.myparty")
+        updates["apk_package_id"] = pid
+    if body.signing_fingerprint is not None:
+        fp = body.signing_fingerprint.strip().upper()
+        if fp and not _re.match(r"^([0-9A-F]{2}:){31}[0-9A-F]{2}$", fp):
+            raise HTTPException(400, "Invalid SHA-256 fingerprint. Expected 32 hex pairs separated by colons.")
+        updates["apk_signing_fingerprint"] = fp
+    if updates:
+        await db.organizations.update_one({"id": org_id}, {"$set": updates})
+    return {"ok": True, "updates": updates}
+
+@api.get("/orgs/{org_id}/apk-package")
+async def download_apk_package(org_id: str, request: Request, _=Depends(require_super_admin)):
+    """Returns a ZIP with twa-manifest.json + assetlinks.json + README + build script.
+    Super-admin runs `bubblewrap build` locally to produce the signed APK."""
+    from fastapi.responses import StreamingResponse
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0})
+    if not org:
+        raise HTTPException(404, "Org not found")
+    manifest = await _build_twa_manifest(org, request)
+    pkg = manifest["packageId"]
+    fp = (org.get("apk_signing_fingerprint") or "").strip()
+
+    assetlinks = [{
+        "relation": ["delegate_permission/common.handle_all_urls"],
+        "target": {
+            "namespace": "android_app",
+            "package_name": pkg,
+            "sha256_cert_fingerprints": [fp] if fp else ["<REPLACE_WITH_SHA256_FINGERPRINT>"],
+        },
+    }]
+
+    safe_org = _re.sub(r"[^a-zA-Z0-9_-]+", "_", org.get("name", "org")).strip("_")
+    readme = f"""# {org.get('party_name') or org.get('name')} — Android APK Build
+
+Generated by VIQSO Digital Media SaaS on {now_iso()}
+
+## What's in this bundle?
+- `twa-manifest.json` — Bubblewrap config for this org
+- `assetlinks.json` — Digital Asset Links for domain verification (host on your server)
+- `build.sh` — convenience build script
+- This README
+
+## Prerequisites (one-time setup on your machine)
+1. Install Node.js 18+ and Java JDK 17+
+2. Install Android SDK (Android Studio recommended)
+3. Install Bubblewrap CLI:
+   ```bash
+   npm install -g @bubblewrap/cli
+   ```
+
+## Build steps
+```bash
+# 1. Initialize project from manifest (creates Android Studio project)
+bubblewrap init --manifest=./twa-manifest.json
+
+# 2. Build signed APK (will prompt for keystore creation on first run)
+bubblewrap build
+
+# Output: app-release-signed.apk in current directory
+```
+
+## Get your SHA-256 fingerprint
+After `bubblewrap build`, run:
+```bash
+keytool -list -v -keystore android.keystore -alias android
+```
+Copy the `SHA-256` line and update the org's signing fingerprint in the
+VIQSO SuperAdmin console. This is REQUIRED for the TWA to open without
+browser chrome.
+
+## Host assetlinks.json
+Upload `assetlinks.json` to:
+  https://{manifest['host']}/.well-known/assetlinks.json
+(VIQSO serves this dynamically — it auto-includes all org packages once
+their fingerprints are configured.)
+
+## Distribute
+- Internal: Side-load the APK on field-worker devices, OR
+- Play Store: Upload to Google Play Console under package name `{pkg}`
+
+## Org details (do not modify)
+- Org ID: `{org['id']}`
+- Access Key: `{org.get('access_key')}`
+- Package ID: `{pkg}`
+- PWA URL: {manifest['fullScopeUrl']}
+
+## No-setup alternative
+Visit https://www.pwabuilder.com/reportcard?site={manifest['fullScopeUrl']}
+to generate the APK in your browser (no local Bubblewrap install needed).
+"""
+
+    build_sh = f"""#!/usr/bin/env bash
+set -euo pipefail
+echo "[VIQSO APK Builder] Building for {pkg}"
+command -v bubblewrap >/dev/null || npm install -g @bubblewrap/cli
+bubblewrap init --manifest=./twa-manifest.json --directory=./twa-project || true
+cd twa-project
+bubblewrap build
+echo "[VIQSO APK Builder] Done. APK at: $(pwd)/app-release-signed.apk"
+"""
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("twa-manifest.json", _json.dumps(manifest, indent=2))
+        zf.writestr(".well-known/assetlinks.json", _json.dumps(assetlinks, indent=2))
+        zf.writestr("README.md", readme)
+        zf.writestr("build.sh", build_sh)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="viqso-apk-{safe_org}.zip"'}
+    )
+
+# Public Digital Asset Links endpoint — aggregates all configured org packages.
+# Must be served at https://{host}/.well-known/assetlinks.json for TWAs to open
+# without browser chrome. Reverse proxy / frontend should route this path through.
+@api.get("/.well-known/assetlinks.json", include_in_schema=False)
+async def assetlinks_json():
+    orgs = await db.organizations.find(
+        {"apk_package_id": {"$exists": True, "$ne": ""}, "apk_signing_fingerprint": {"$exists": True, "$ne": ""}},
+        {"_id": 0, "apk_package_id": 1, "apk_signing_fingerprint": 1},
+    ).to_list(1000)
+    return [
+        {
+            "relation": ["delegate_permission/common.handle_all_urls"],
+            "target": {
+                "namespace": "android_app",
+                "package_name": o["apk_package_id"],
+                "sha256_cert_fingerprints": [o["apk_signing_fingerprint"]],
+            },
+        }
+        for o in orgs
+    ]
 
 
 # ---------- WAR ROOM LIVE SCREEN ----------
