@@ -73,6 +73,23 @@ JWT auth, booth/voter/visit CRUD, analytics, dashboard.
 - **Frontend Import.jsx**: useEffect polling, progress bar, OCR badge, failed-rows accordion (page/name/epic/error)
 - Multi-page support; multi-tenancy strict (jobs scoped per `org_id`); duplicate detection via EPIC
 
+### iter-7 — Election Context for white-label APK (17/17 ✓ pytest + frontend verified) [2026-05-28]
+- **Settings extended**: `party_symbol_url` (EC-allotted election symbol, separate from logo), `election_type` enum (ward / municipal / vidhan_sabha / lok_sabha / zilla_parishad / panchayat / other), `election_scope_name`
+- **TWA manifest now dynamic**: App name = "`{Candidate}` — `{ElectionLabel}`", launcher = "`{FirstName} ({MLA|MP|ZP|...})`", icon priority = party_symbol > logo, start_url includes `&et={type}`
+- **`ELECTION_TYPE_META`** dict maps 7 types → human labels + short codes (MLA, MP, ZP, GP, etc.)
+- **New super-admin endpoint** `PATCH /api/orgs/{id}/election-context` updates party/candidate/symbol/logo/election fields on any org's settings doc
+- **APK config response** now includes `app_name`, `icon_url`, `election_context{}`, `election_types[]` for the UI
+- **ZIP README** auto-generates an Election Context table showing party, candidate, election type, constituency, date, symbol, logo, theme, app & launcher names
+- **Frontend ApkBuilderDialog**: New "Election context" section with 11 data-testids — party name/short, candidate name/position, election-type dropdown (7 options), constituency, date, theme color picker, party symbol URL, party logo URL — all reactive to live App Preview tile (icon updates from symbol URL, app name shows election label)
+- **Tesseract 5.3 + Hindi langpack** installed system-wide; `pytesseract` + `pdf2image` + `poppler-utils`
+- **Smart text-vs-scan detection**: pdfplumber tries text extraction per page; pages with <80 chars trigger OCR fallback automatically
+- **Async background job pattern**: POST returns `{job_id}` immediately, frontend polls `GET /import/voters-pdf/jobs/{job_id}` every 2s
+- **Parses**: Voter Name, Father/Husband Name, Age, Gender, House No, EPIC (English + Devanagari regex patterns)
+- **Job collection** `pdf_import_jobs`: tracks total_pages, pages_processed, inserted, skipped_duplicates, failed_count, blocks_detected, ocr_used, failed_rows[], progress_percent
+- **Force OCR toggle** in UI for purely scanned PDFs
+- **Frontend Import.jsx**: useEffect polling, progress bar, OCR badge, failed-rows accordion (page/name/epic/error)
+- Multi-page support; multi-tenancy strict (jobs scoped per `org_id`); duplicate detection via EPIC
+
 ## Backlog
 ### P1
 - White-label APK strategy **— DONE in iter-5**

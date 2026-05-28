@@ -235,7 +235,7 @@ export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) 
                       data-testid="apk-election-type-select"
                     >
                       {electionTypes.map((et) => (
-                        <option key={et.value} value={et.value}>{et.label} — {et.short}</option>
+                        <option key={et.value} value={et.value}>{`${et.label} — ${et.short}`}</option>
                       ))}
                     </select>
                   </div>
