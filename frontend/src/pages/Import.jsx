@@ -2,13 +2,17 @@ import React, { useState } from "react";
 import api, { API } from "../lib/api";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { Upload, Download, FileSpreadsheet, CheckCircle2, AlertCircle, ArrowRight } from "lucide-react";
+import { Upload, Download, FileSpreadsheet, CheckCircle2, AlertCircle, ArrowRight, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 export default function ImportPage() {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pdfBooth, setPdfBooth] = useState("");
+  const [pdfUploading, setPdfUploading] = useState(false);
+  const [pdfResult, setPdfResult] = useState(null);
 
   const downloadTemplate = async () => {
     try {
@@ -52,6 +56,32 @@ export default function ImportPage() {
       toast.error(err.response?.data?.detail || "Upload failed");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const uploadPdf = async () => {
+    if (!pdfFile) {
+      toast.error("Select a PDF first");
+      return;
+    }
+    if (!pdfBooth.trim()) {
+      toast.error("Enter target booth number");
+      return;
+    }
+    setPdfUploading(true);
+    setPdfResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", pdfFile);
+      const { data } = await api.post(`/import/voters-pdf?booth_number=${encodeURIComponent(pdfBooth.trim())}`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setPdfResult(data);
+      toast.success(`PDF processed: ${data.inserted} voters imported`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "PDF import failed");
+    } finally {
+      setPdfUploading(false);
     }
   };
 
@@ -151,6 +181,81 @@ export default function ImportPage() {
         </Card>
       </div>
 
+      {/* PDF Import Section */}
+      <div>
+        <div className="mb-3 flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-md viqso-gradient text-white">
+            <FileText className="h-3.5 w-3.5" />
+          </div>
+          <h2 className="font-display text-xl font-bold text-slate-900">
+            Election Commission PDF Import
+          </h2>
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+            Beta
+          </span>
+        </div>
+        <p className="mb-4 text-sm text-slate-500">
+          Upload an Election Commission electoral roll PDF (text-based). System auto-extracts Voter Name, EPIC, Age, Gender, House Number.
+        </p>
+        <Card className="border-slate-200 p-5 shadow-none">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto_auto] md:items-end">
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-700">Target Booth Number *</label>
+              <input
+                type="text"
+                value={pdfBooth}
+                onChange={(e) => setPdfBooth(e.target.value)}
+                placeholder="e.g. B-2001 (will be auto-created if missing)"
+                className="mt-2 h-10 w-full rounded-md border border-slate-300 px-3 text-sm font-mono"
+                data-testid="pdf-booth-input"
+              />
+            </div>
+            <label
+              className="flex h-10 cursor-pointer items-center gap-2 rounded-md border-2 border-dashed border-slate-300 px-4 text-sm font-medium text-slate-700 transition-colors hover:border-purple-400 hover:bg-purple-50/30"
+              data-testid="pdf-drop-zone"
+            >
+              <Upload className="h-4 w-4" />
+              {pdfFile ? pdfFile.name.slice(0, 30) : "Select PDF"}
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                className="hidden"
+                onChange={(e) => setPdfFile(e.target.files[0])}
+                data-testid="pdf-file-input"
+              />
+            </label>
+            <Button
+              onClick={uploadPdf}
+              disabled={!pdfFile || pdfUploading}
+              className="group relative h-10 overflow-hidden rounded-md text-white shadow-md"
+              data-testid="pdf-upload-button"
+            >
+              <span className="absolute inset-0 viqso-gradient" />
+              <span className="relative flex items-center font-semibold">
+                {pdfUploading ? "Processing…" : "Extract & Import"}
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </span>
+            </Button>
+          </div>
+          {pdfResult && (
+            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="pdf-result">
+              <Stat k="Pages Processed" v={pdfResult.pages_processed} />
+              <Stat k="Blocks Detected" v={pdfResult.blocks_detected} />
+              <Stat k="Voters Imported" v={pdfResult.inserted} highlight />
+              <Stat k="Skipped" v={pdfResult.skipped} />
+              {pdfResult.errors?.length > 0 && (
+                <div className="col-span-full mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  <strong>{pdfResult.errors.length} parse errors</strong> — review and re-run with cleaner PDF if needed.
+                </div>
+              )}
+            </div>
+          )}
+          <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+            <strong>Tip:</strong> Works best on text-based EC PDFs. Scanned-image PDFs require OCR (coming soon). For best accuracy, also try the Excel template above.
+          </div>
+        </Card>
+      </div>
+
       {/* Result */}
       {result && (
         <Card className="border-slate-200 p-6 shadow-none" data-testid="upload-result">
@@ -191,3 +296,12 @@ export default function ImportPage() {
     </div>
   );
 }
+
+const Stat = ({ k, v, highlight }) => (
+  <div className="rounded-md border border-slate-200 bg-white p-3">
+    <div className="text-[10px] uppercase tracking-wider text-slate-500">{k}</div>
+    <div className={`mt-1 font-display text-2xl font-bold ${highlight ? "viqso-gradient-text" : "text-slate-900"}`}>
+      {v}
+    </div>
+  </div>
+);

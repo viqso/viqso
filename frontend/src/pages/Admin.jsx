@@ -97,8 +97,13 @@ function UserManager() {
                     <SelectTrigger data-testid="new-user-role"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="campaign_manager">Campaign Manager</SelectItem>
                       <SelectItem value="supervisor">Supervisor</SelectItem>
-                      <SelectItem value="worker">Field Worker</SelectItem>
+                      <SelectItem value="booth_president">Booth President</SelectItem>
+                      <SelectItem value="worker">Booth Worker</SelectItem>
+                      <SelectItem value="survey_agent">Survey Agent</SelectItem>
+                      <SelectItem value="data_operator">Data Operator</SelectItem>
+                      <SelectItem value="viewer">Viewer / Analyst</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

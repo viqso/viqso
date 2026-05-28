@@ -25,6 +25,12 @@ DEFAULT_ACCESS_KEY = os.environ.get('DEFAULT_ACCESS_KEY', 'VIQSO-2026')
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
+# Roles and permissions
+ALL_ROLES = ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent", "data_operator", "viewer"]
+WRITE_ROLES = ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent", "data_operator"]
+ADMIN_LEVEL = ["admin", "campaign_manager"]
+SUPERVISOR_LEVEL = ["admin", "campaign_manager", "supervisor", "booth_president"]
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -91,7 +97,21 @@ async def get_current_user(request: Request) -> dict:
     org = await db.organizations.find_one({"id": user["org_id"], "active": True})
     if not org:
         raise HTTPException(403, "Organization inactive or removed")
+    # Subscription expiry check
+    expires = org.get("expires_at")
+    if expires:
+        try:
+            exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+            if exp_dt < datetime.now(timezone.utc):
+                raise HTTPException(403, "Subscription expired — contact VIQSO Digital Media")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     user["org_name"] = org.get("name")
+    user["is_demo"] = bool(org.get("is_demo"))
+    user["demo_expires_at"] = org.get("expires_at")
+    user["watermark"] = org.get("watermark", "DEMO") if org.get("is_demo") else None
     return user
 
 
@@ -285,12 +305,12 @@ async def list_users(user=Depends(require_roles("admin", "supervisor"))):
     return users
 
 @api.post("/users")
-async def create_user(body: UserCreate, admin=Depends(require_roles("admin"))):
+async def create_user(body: UserCreate, admin=Depends(require_roles("admin", "campaign_manager"))):
     email = body.email.lower().strip()
     if await db.users.find_one({"email": email, "org_id": admin["org_id"]}):
         raise HTTPException(400, "Email already exists in this organization")
-    if body.role not in ["admin", "supervisor", "worker"]:
-        raise HTTPException(400, "Invalid role")
+    if body.role not in ALL_ROLES:
+        raise HTTPException(400, f"Invalid role. Must be one of: {ALL_ROLES}")
     doc = {
         "id": str(uuid.uuid4()),
         "email": email,
@@ -1161,6 +1181,297 @@ async def voter_slip_data(voter_id: str, user=Depends(get_current_user)):
     return {"voter": v, "booth": booth, "org": org, "settings": settings}
 
 
+# ---------- PDF VOTER IMPORT (Election Commission style rolls) ----------
+@api.post("/import/voters-pdf")
+async def import_voters_pdf(
+    file: UploadFile = File(...),
+    booth_number: Optional[str] = None,
+    user=Depends(require_roles("admin", "campaign_manager", "supervisor", "data_operator")),
+):
+    """Extract voter records from a PDF electoral roll. Best on text-based PDFs.
+       For scanned-image PDFs, OCR is a future enhancement."""
+    import pdfplumber, re
+    from io import BytesIO
+
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "PDF file required")
+    content = await file.read()
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(400, "PDF too large (max 25 MB)")
+
+    # Resolve target booth (existing or auto-create)
+    booth = None
+    if booth_number:
+        booth = await db.booths.find_one({"booth_number": booth_number, "org_id": user["org_id"]})
+        if not booth:
+            booth = {
+                "id": str(uuid.uuid4()),
+                "name": f"Booth {booth_number}",
+                "booth_number": booth_number,
+                "ward": "Imported",
+                "constituency": "",
+                "location": "",
+                "target_voters": 0,
+                "supervisor_id": None,
+                "assigned_workers": [],
+                "org_id": user["org_id"],
+                "created_at": now_iso(),
+            }
+            await db.booths.insert_one(dict(booth))
+
+    extracted = []
+    pages_count = 0
+    raw_text = ""
+    try:
+        with pdfplumber.open(BytesIO(content)) as pdf:
+            pages_count = len(pdf.pages)
+            for page in pdf.pages:
+                t = page.extract_text() or ""
+                raw_text += t + "\n"
+    except Exception as e:
+        raise HTTPException(400, f"PDF parse error: {e}")
+
+    # EC PDF heuristics — try common patterns:
+    # Name: <name>     Husband/Father Name: <relname>
+    # Age: <n>     Gender: <m/f>     House No: <h>     ID/EPIC: <code>
+
+    epic_pattern = re.compile(r"\b([A-Z]{2,3}\s?[/-]?\s?\d{6,8})\b")
+    age_pattern = re.compile(r"Age\s*[:\-]?\s*(\d{1,3})", re.I)
+    gender_pattern = re.compile(r"Gender\s*[:\-]?\s*(male|female|f|m|other)", re.I)
+    name_pattern = re.compile(r"(?:Name|नाम)\s*[:\-]?\s*([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s\.]+?)(?:\n|Father|Husband|Age|Gender|EPIC|ID)", re.I)
+    relname_pattern = re.compile(r"(?:Father['s]*\s*Name|Husband['s]*\s*Name|पिता|पति|F/H Name)\s*[:\-]?\s*([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s\.]+?)(?:\n|Age|Gender|EPIC|ID|House)", re.I)
+    house_pattern = re.compile(r"(?:House\s*No|H[\s]*No|मकान\s*नं)\s*[:\-]?\s*([A-Za-z0-9\-\/]+)", re.I)
+
+    # Split text into voter blocks — heuristic: split on EPIC matches
+    epics = list(epic_pattern.finditer(raw_text))
+    if not epics:
+        # Fallback: split on double-newline blocks
+        blocks = [b for b in re.split(r"\n\s*\n", raw_text) if b.strip()]
+    else:
+        blocks = []
+        for i, m in enumerate(epics):
+            start = epics[i - 1].end() if i > 0 else 0
+            end = epics[i + 1].start() if i + 1 < len(epics) else len(raw_text)
+            blocks.append(raw_text[max(0, start - 200):end])
+
+    inserted = 0
+    skipped = 0
+    errors = []
+
+    for idx, blk in enumerate(blocks, 1):
+        try:
+            epic_m = epic_pattern.search(blk)
+            name_m = name_pattern.search(blk)
+            rel_m = relname_pattern.search(blk)
+            age_m = age_pattern.search(blk)
+            gender_m = gender_pattern.search(blk)
+            house_m = house_pattern.search(blk)
+
+            if not (name_m or epic_m):
+                continue
+
+            name = (name_m.group(1).strip() if name_m else "").strip(" .")
+            if not name and epic_m:
+                # last resort: take 2-4 capitalized words before EPIC
+                pre = blk[:epic_m.start()].strip().split("\n")[-1]
+                tokens = [t for t in pre.split() if t.istitle() or any('\u0900' <= c <= '\u097F' for c in t)]
+                name = " ".join(tokens[-4:])
+            if not name:
+                continue
+
+            gender = None
+            if gender_m:
+                g = gender_m.group(1).lower()
+                gender = "female" if g.startswith("f") else "male" if g.startswith("m") else "other"
+
+            age = None
+            if age_m:
+                try: age = int(age_m.group(1))
+                except: pass
+
+            # Use booth_number passed in (or skip)
+            if not booth:
+                errors.append({"row": idx, "error": "booth_number is required for PDF import"})
+                skipped += 1
+                continue
+
+            address = (house_m.group(1) if house_m else "").strip()
+            surname = extract_surname(name)
+            family_id = auto_family_id(address, surname) if address else None
+
+            voter_doc = {
+                "id": str(uuid.uuid4()),
+                "booth_id": booth["id"],
+                "name": name[:80],
+                "voter_id_number": (epic_m.group(1).replace(" ", "") if epic_m else None),
+                "age": age,
+                "gender": gender,
+                "address": address[:200] if address else "",
+                "phone": None,
+                "email": None,
+                "caste": None,
+                "religion": None,
+                "occupation": None,
+                "political_preference": None,
+                "sentiment": None,
+                "issues": [],
+                "likely_to_vote": None,
+                "notes": "Imported from PDF",
+                "custom_fields": {"father_husband_name": rel_m.group(1).strip(" .") if rel_m else None},
+                "org_id": user["org_id"],
+                "surname": surname,
+                "family_id": family_id,
+                "surveyed_by": user["id"],
+                "surveyed_by_name": user["name"],
+                "surveyed_at": now_iso(),
+            }
+            # Smart merge if EPIC already in DB
+            vid = voter_doc["voter_id_number"]
+            existing = await db.voters.find_one({"voter_id_number": vid, "org_id": user["org_id"]}) if vid else None
+            if existing:
+                skipped += 1
+                continue
+            await db.voters.insert_one(voter_doc)
+            inserted += 1
+        except Exception as e:
+            errors.append({"row": idx, "error": str(e)[:120]})
+            skipped += 1
+
+    await audit_log(user, "pdf_import", {
+        "file": file.filename, "pages": pages_count,
+        "inserted": inserted, "skipped": skipped, "booth": booth_number,
+    })
+
+    return {
+        "filename": file.filename,
+        "pages_processed": pages_count,
+        "blocks_detected": len(blocks),
+        "inserted": inserted,
+        "skipped": skipped,
+        "errors": errors[:20],
+        "booth_id": booth["id"] if booth else None,
+    }
+
+
+# ---------- AUDIT LOG ----------
+async def audit_log(user: dict, action: str, details: Optional[Dict] = None):
+    try:
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "org_id": user["org_id"],
+            "user_id": user["id"],
+            "user_name": user["name"],
+            "user_email": user.get("email"),
+            "role": user["role"],
+            "action": action,
+            "details": details or {},
+            "at": now_iso(),
+        })
+    except Exception:
+        pass
+
+@api.get("/audit-logs")
+async def list_audit_logs(
+    user=Depends(require_roles("admin", "campaign_manager")),
+    limit: int = 200,
+    action: Optional[str] = None,
+):
+    q = {"org_id": user["org_id"]}
+    if action:
+        q["action"] = action
+    logs = await db.audit_logs.find(q, {"_id": 0}).sort("at", -1).limit(limit).to_list(limit)
+    return logs
+
+
+# ---------- PER-ORG PWA MANIFEST (white-label) ----------
+@api.get("/manifest")
+async def org_manifest(request: Request, access_key: Optional[str] = None):
+    """Returns a PWA manifest customized for the org identified by access_key.
+       Used by the install prompt — each org installs as its own branded app."""
+    org_id = DEFAULT_ORG_ID
+    settings_doc = None
+    if access_key:
+        org = await db.organizations.find_one({"access_key": access_key, "active": True})
+        if org:
+            org_id = org["id"]
+    settings_doc = await db.settings.find_one({"org_id": org_id}, {"_id": 0})
+    if not settings_doc:
+        settings_doc = dict(DEFAULT_SETTINGS)
+    short = settings_doc.get("party_short_name") or "VIQSO"
+    name = settings_doc.get("party_name") or "Voter CRM"
+    logo = settings_doc.get("logo_url") or DEFAULT_SETTINGS["logo_url"]
+    theme = settings_doc.get("primary_color") or "#0B1020"
+    return {
+        "short_name": short,
+        "name": f"{name} — Voter CRM",
+        "description": settings_doc.get("tagline") or "Voter CRM by VIQSO Digital Media",
+        "icons": [
+            {"src": logo, "sizes": "192x192 512x512", "type": "image/png", "purpose": "any maskable"}
+        ],
+        "start_url": "/",
+        "display": "standalone",
+        "orientation": "portrait",
+        "theme_color": theme,
+        "background_color": "#0B1020",
+        "scope": "/",
+        "lang": "en-IN",
+    }
+
+
+# ---------- WAR ROOM LIVE SCREEN ----------
+@api.get("/war-room/live")
+async def war_room_live(user=Depends(get_current_user)):
+    """Real-time aggregate for big-screen TV display. Refresh every 30s on frontend."""
+    voter_filter = {"org_id": user["org_id"]}
+    booth_filter = {"org_id": user["org_id"]}
+
+    total_voters = await db.voters.count_documents(voter_filter)
+    total_booths = await db.booths.count_documents(booth_filter)
+    supporters = await db.voters.count_documents({**voter_filter, "political_preference": "supporter"})
+    likely = await db.voters.count_documents({**voter_filter, "likely_to_vote": True})
+    today = datetime.now(timezone.utc).date().isoformat()
+    todays_surveys = await db.voters.count_documents({**voter_filter, "surveyed_at": {"$gte": today}})
+
+    # Top booths by completion
+    booths = await db.booths.find(booth_filter, {"_id": 0}).to_list(1000)
+    booth_rank = []
+    for b in booths:
+        surveyed = await db.voters.count_documents({"booth_id": b["id"]})
+        booth_rank.append({
+            "name": b["name"], "booth_number": b["booth_number"],
+            "ward": b.get("ward"),
+            "surveyed": surveyed, "target": b.get("target_voters", 0),
+            "completion": round((surveyed / b["target_voters"] * 100), 1) if b.get("target_voters") else 0,
+            "supporters": await db.voters.count_documents({"booth_id": b["id"], "political_preference": "supporter"})
+        })
+    booth_rank.sort(key=lambda x: -x["completion"])
+
+    # Top issues
+    issues_counter = Counter()
+    async for v in db.voters.find(voter_filter, {"_id": 0, "issues": 1}):
+        for i in v.get("issues", []) or []:
+            issues_counter[i] += 1
+
+    # Recent activity feed
+    recent = await db.audit_logs.find({"org_id": user["org_id"]}, {"_id": 0}).sort("at", -1).limit(10).to_list(10)
+
+    return {
+        "totals": {
+            "voters": total_voters,
+            "booths": total_booths,
+            "supporters": supporters,
+            "likely_to_vote": likely,
+            "todays_surveys": todays_surveys,
+            "support_pct": round((supporters / total_voters * 100), 1) if total_voters else 0,
+        },
+        "top_booths": booth_rank[:6],
+        "weak_booths": [b for b in booth_rank if b["completion"] < 40][:6],
+        "top_issues": [{"issue": k, "count": v} for k, v in issues_counter.most_common(8)],
+        "recent_activity": recent,
+        "timestamp": now_iso(),
+    }
+
+
 # ---------- ROOT ----------
 @api.get("/")
 async def root():
@@ -1175,6 +1486,8 @@ class OrgCreate(BaseModel):
     admin_email: str
     admin_password: str
     admin_name: str = "Administrator"
+    is_demo: bool = False
+    expires_in_days: Optional[int] = None
 
 @api.get("/orgs")
 async def list_orgs(_=Depends(require_super_admin)):
@@ -1191,12 +1504,18 @@ async def create_org(body: OrgCreate, _=Depends(require_super_admin)):
     if await db.organizations.find_one({"access_key": access_key}):
         raise HTTPException(400, "Access key already exists")
     org_id = str(uuid.uuid4())
+    expires_at = None
+    if body.expires_in_days:
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=int(body.expires_in_days))).isoformat()
     org = {
         "id": org_id,
         "name": body.name,
         "party_name": body.party_name,
         "access_key": access_key,
         "active": True,
+        "is_demo": bool(body.is_demo),
+        "expires_at": expires_at,
+        "watermark": "DEMO PREVIEW" if body.is_demo else None,
         "created_at": now_iso(),
     }
     await db.organizations.insert_one(org)
@@ -1235,8 +1554,15 @@ async def create_org(body: OrgCreate, _=Depends(require_super_admin)):
 
 @api.patch("/orgs/{org_id}")
 async def update_org(org_id: str, body: dict, _=Depends(require_super_admin)):
-    allowed = {"name", "party_name", "active", "access_key"}
+    allowed = {"name", "party_name", "active", "access_key", "is_demo", "expires_at", "watermark", "expires_in_days"}
     updates = {k: v for k, v in body.items() if k in allowed}
+    # Handle relative expiry
+    if "expires_in_days" in updates:
+        days = updates.pop("expires_in_days")
+        if days is None or days == 0:
+            updates["expires_at"] = None
+        else:
+            updates["expires_at"] = (datetime.now(timezone.utc) + timedelta(days=int(days))).isoformat()
     if not updates:
         raise HTTPException(400, "No valid fields to update")
     await db.organizations.update_one({"id": org_id}, {"$set": updates})

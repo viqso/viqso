@@ -13,6 +13,8 @@ import {
   Layers,
   Home,
   Upload,
+  Tv,
+  ScrollText,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Avatar, AvatarFallback } from "../components/ui/avatar";
@@ -20,28 +22,40 @@ import { ViqsoWordmark } from "../components/Brand";
 import { useSettings } from "../context/SettingsContext";
 
 const navItems = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "supervisor", "worker"] },
-  { to: "/booths", label: "Booths", icon: MapPin, roles: ["admin", "supervisor", "worker"] },
-  { to: "/voters", label: "Voters", icon: Users, roles: ["admin", "supervisor", "worker"] },
-  { to: "/survey/new", label: "New Survey", icon: ClipboardList, roles: ["admin", "supervisor", "worker"] },
-  { to: "/segregate", label: "Segregate", icon: Layers, roles: ["admin", "supervisor", "worker"] },
-  { to: "/families", label: "Families", icon: Home, roles: ["admin", "supervisor", "worker"] },
-  { to: "/visits", label: "Visits", icon: CalendarCheck, roles: ["admin", "supervisor", "worker"] },
-  { to: "/import", label: "Import Data", icon: Upload, roles: ["admin", "supervisor"] },
-  { to: "/analytics", label: "Analytics", icon: BarChart3, roles: ["admin", "supervisor"] },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent", "data_operator", "viewer"] },
+  { to: "/booths", label: "Booths", icon: MapPin, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent", "viewer"] },
+  { to: "/voters", label: "Voters", icon: Users, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent", "viewer", "data_operator"] },
+  { to: "/survey/new", label: "New Survey", icon: ClipboardList, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent"] },
+  { to: "/segregate", label: "Segregate", icon: Layers, roles: ["admin", "campaign_manager", "supervisor", "viewer"] },
+  { to: "/families", label: "Families", icon: Home, roles: ["admin", "campaign_manager", "supervisor", "viewer"] },
+  { to: "/visits", label: "Visits", icon: CalendarCheck, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker"] },
+  { to: "/import", label: "Import Data", icon: Upload, roles: ["admin", "campaign_manager", "supervisor", "data_operator"] },
+  { to: "/analytics", label: "Analytics", icon: BarChart3, roles: ["admin", "campaign_manager", "supervisor", "viewer"] },
+  { to: "/war-room", label: "War Room", icon: Tv, roles: ["admin", "campaign_manager", "supervisor"] },
+  { to: "/audit", label: "Audit Logs", icon: ScrollText, roles: ["admin", "campaign_manager"] },
   { to: "/admin", label: "Admin Panel", icon: Shield, roles: ["admin"] },
 ];
 
 const ROLE_LABEL = {
   admin: "Administrator",
+  campaign_manager: "Campaign Manager",
   supervisor: "Supervisor",
-  worker: "Field Worker",
+  booth_president: "Booth President",
+  worker: "Booth Worker",
+  survey_agent: "Survey Agent",
+  data_operator: "Data Operator",
+  viewer: "Viewer / Analyst",
 };
 
 const ROLE_BADGE_STYLE = {
   admin: "from-orange-500 to-pink-500",
+  campaign_manager: "from-purple-600 to-pink-600",
   supervisor: "from-purple-500 to-pink-500",
+  booth_president: "from-cyan-500 to-blue-500",
   worker: "from-blue-500 to-purple-500",
+  survey_agent: "from-emerald-500 to-blue-500",
+  data_operator: "from-slate-500 to-slate-700",
+  viewer: "from-slate-400 to-slate-500",
 };
 
 export default function DashboardLayout() {
@@ -67,6 +81,13 @@ export default function DashboardLayout() {
 
   return (
     <div className="flex min-h-screen bg-slate-50">
+      {/* Demo / Subscription banner */}
+      {user.is_demo && (
+        <div className="fixed top-0 left-0 right-0 z-50 viqso-gradient py-1.5 text-center text-[11px] font-bold uppercase tracking-[0.22em] text-white shadow-md" data-testid="demo-banner">
+          {user.watermark || "DEMO PREVIEW"} · For demonstration only
+          {user.demo_expires_at && <span className="ml-2 opacity-80">· Expires {new Date(user.demo_expires_at).toLocaleDateString()}</span>}
+        </div>
+      )}
       {/* Sidebar */}
       <aside
         className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white"

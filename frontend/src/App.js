@@ -19,6 +19,8 @@ import FamiliesPage from "./pages/Families";
 import ImportPage from "./pages/Import";
 import SuperAdminPage from "./pages/SuperAdmin";
 import VoterSlipPage from "./pages/VoterSlip";
+import WarRoomPage from "./pages/WarRoom";
+import AuditLogsPage from "./pages/AuditLogs";
 
 const ProtectedRoute = ({ children, roles }) => {
   const { user, loading } = useAuth();
@@ -68,6 +70,22 @@ function App() {
                 <Route path="segregate" element={<SegregatePage />} />
                 <Route path="families" element={<FamiliesPage />} />
                 <Route path="analytics" element={<AnalyticsPage />} />
+                <Route
+                  path="war-room"
+                  element={
+                    <ProtectedRoute roles={["admin", "campaign_manager", "supervisor"]}>
+                      <WarRoomPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="audit"
+                  element={
+                    <ProtectedRoute roles={["admin", "campaign_manager"]}>
+                      <AuditLogsPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="import"
                   element={

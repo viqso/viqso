@@ -19,6 +19,7 @@ export default function SuperAdminPage() {
   const [created, setCreated] = useState(null);
   const [form, setForm] = useState({
     name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator",
+    is_demo: false, expires_in_days: "",
   });
 
   const load = async (key) => {
@@ -54,7 +55,7 @@ export default function SuperAdminPage() {
       if (!res.ok) throw new Error(data.detail || "Failed");
       setCreated(data);
       toast.success("Organization created");
-      setForm({ name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator" });
+      setForm({ name: "", party_name: "", admin_email: "", admin_password: "", admin_name: "Administrator", is_demo: false, expires_in_days: "" });
       load(superKey);
     } catch (err) {
       toast.error(String(err.message || err));
