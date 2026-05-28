@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import api, { API } from "../lib/api";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { Upload, Download, FileSpreadsheet, CheckCircle2, AlertCircle, ArrowRight, FileText } from "lucide-react";
+import { Upload, Download, FileSpreadsheet, CheckCircle2, AlertCircle, ArrowRight, FileText, ScanText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function ImportPage() {
@@ -12,7 +12,31 @@ export default function ImportPage() {
   const [pdfFile, setPdfFile] = useState(null);
   const [pdfBooth, setPdfBooth] = useState("");
   const [pdfUploading, setPdfUploading] = useState(false);
-  const [pdfResult, setPdfResult] = useState(null);
+  const [forceOcr, setForceOcr] = useState(false);
+  const [pdfJob, setPdfJob] = useState(null);
+  const pollRef = useRef(null);
+
+  // Poll job status while it's processing
+  useEffect(() => {
+    if (!pdfJob?.id || pdfJob.status === "completed" || pdfJob.status === "failed") {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      return;
+    }
+    pollRef.current = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/import/voters-pdf/jobs/${pdfJob.id}`);
+        setPdfJob(data);
+        if (data.status === "completed") {
+          toast.success(`OCR import done: ${data.inserted} voters imported`);
+        } else if (data.status === "failed") {
+          toast.error(`Import failed: ${data.error || "unknown error"}`);
+        }
+      } catch (err) {
+        // keep polling on transient errors
+      }
+    }, 2000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [pdfJob?.id, pdfJob?.status]);
 
   const downloadTemplate = async () => {
     try {
@@ -60,24 +84,20 @@ export default function ImportPage() {
   };
 
   const uploadPdf = async () => {
-    if (!pdfFile) {
-      toast.error("Select a PDF first");
-      return;
-    }
-    if (!pdfBooth.trim()) {
-      toast.error("Enter target booth number");
-      return;
-    }
+    if (!pdfFile) { toast.error("Select a PDF first"); return; }
+    if (!pdfBooth.trim()) { toast.error("Enter target booth number"); return; }
     setPdfUploading(true);
-    setPdfResult(null);
+    setPdfJob(null);
     try {
       const form = new FormData();
       form.append("file", pdfFile);
-      const { data } = await api.post(`/import/voters-pdf?booth_number=${encodeURIComponent(pdfBooth.trim())}`, form, {
+      const qs = `?booth_number=${encodeURIComponent(pdfBooth.trim())}&force_ocr=${forceOcr ? "true" : "false"}`;
+      const { data } = await api.post(`/import/voters-pdf${qs}`, form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setPdfResult(data);
-      toast.success(`PDF processed: ${data.inserted} voters imported`);
+      // Backend returns job_id — start polling
+      setPdfJob({ id: data.job_id, status: data.status, total_pages: 0, pages_processed: 0, inserted: 0, failed_count: 0, progress_percent: 0 });
+      toast.info("Import queued. Processing in background…");
     } catch (err) {
       toast.error(err.response?.data?.detail || "PDF import failed");
     } finally {
@@ -190,12 +210,13 @@ export default function ImportPage() {
           <h2 className="font-display text-xl font-bold text-slate-900">
             Election Commission PDF Import
           </h2>
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
-            Beta
+          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+            OCR Enabled
           </span>
         </div>
         <p className="mb-4 text-sm text-slate-500">
-          Upload an Election Commission electoral roll PDF (text-based). System auto-extracts Voter Name, EPIC, Age, Gender, House Number.
+          Upload an EC electoral roll PDF — text-based or scanned. The system auto-detects scanned pages and runs Tesseract OCR
+          (Hindi + English) to extract Voter Name, Father/Husband, Age, Gender, House No., EPIC. Multi-page booth PDFs supported.
         </p>
         <Card className="border-slate-200 p-5 shadow-none">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto_auto] md:items-end">
@@ -226,32 +247,108 @@ export default function ImportPage() {
             </label>
             <Button
               onClick={uploadPdf}
-              disabled={!pdfFile || pdfUploading}
+              disabled={!pdfFile || pdfUploading || (pdfJob && pdfJob.status === "processing")}
               className="group relative h-10 overflow-hidden rounded-md text-white shadow-md"
               data-testid="pdf-upload-button"
             >
               <span className="absolute inset-0 viqso-gradient" />
               <span className="relative flex items-center font-semibold">
-                {pdfUploading ? "Processing…" : "Extract & Import"}
+                {pdfUploading ? "Queuing…" : "Extract & Import"}
                 <ArrowRight className="ml-2 h-4 w-4" />
               </span>
             </Button>
           </div>
-          {pdfResult && (
-            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="pdf-result">
-              <Stat k="Pages Processed" v={pdfResult.pages_processed} />
-              <Stat k="Blocks Detected" v={pdfResult.blocks_detected} />
-              <Stat k="Voters Imported" v={pdfResult.inserted} highlight />
-              <Stat k="Skipped" v={pdfResult.skipped} />
-              {pdfResult.errors?.length > 0 && (
-                <div className="col-span-full mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                  <strong>{pdfResult.errors.length} parse errors</strong> — review and re-run with cleaner PDF if needed.
+
+          {/* Force OCR toggle */}
+          <label className="mt-3 inline-flex items-center gap-2 cursor-pointer text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={forceOcr}
+              onChange={(e) => setForceOcr(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-400"
+              data-testid="pdf-force-ocr-checkbox"
+            />
+            <ScanText className="h-3.5 w-3.5 text-slate-500" />
+            <span>Force OCR (use for scanned PDFs; ~3-5s per page)</span>
+          </label>
+
+          {/* Job progress card */}
+          {pdfJob && (
+            <div className="mt-5 rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4" data-testid="pdf-job-progress">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {pdfJob.status === "completed" ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  ) : pdfJob.status === "failed" ? (
+                    <AlertCircle className="h-4 w-4 text-red-600" />
+                  ) : (
+                    <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
+                  )}
+                  <span className="text-sm font-semibold text-slate-900">
+                    {pdfJob.status === "completed" ? "Import complete" :
+                     pdfJob.status === "failed" ? "Import failed" :
+                     pdfJob.status === "processing" ? `Processing page ${pdfJob.pages_processed || 0} of ${pdfJob.total_pages || "?"}` :
+                     "Queued…"}
+                  </span>
+                  {pdfJob.ocr_used && (
+                    <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                      <ScanText className="h-3 w-3" /> OCR
+                    </span>
+                  )}
                 </div>
+                <span className="font-mono text-xs text-slate-500">{pdfJob.progress_percent || 0}%</span>
+              </div>
+              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full viqso-gradient transition-all duration-500"
+                  style={{ width: `${pdfJob.progress_percent || 0}%` }}
+                />
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+                <Stat k="Pages" v={`${pdfJob.pages_processed || 0}/${pdfJob.total_pages || "—"}`} />
+                <Stat k="Blocks detected" v={pdfJob.blocks_detected || 0} />
+                <Stat k="Inserted" v={pdfJob.inserted || 0} highlight />
+                <Stat k="Skipped (dup)" v={pdfJob.skipped_duplicates || 0} />
+                <Stat k="Failed" v={pdfJob.failed_count || 0} />
+              </div>
+
+              {pdfJob.status === "failed" && pdfJob.error && (
+                <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                  <strong>Error:</strong> {pdfJob.error}
+                </div>
+              )}
+
+              {pdfJob.failed_rows && pdfJob.failed_rows.length > 0 && (
+                <details className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3" data-testid="pdf-failed-rows">
+                  <summary className="cursor-pointer text-xs font-semibold text-amber-800">
+                    View {pdfJob.failed_rows.length} failed row{pdfJob.failed_rows.length > 1 ? "s" : ""}
+                  </summary>
+                  <div className="mt-2 max-h-60 overflow-y-auto">
+                    <table className="w-full text-[11px]">
+                      <thead className="text-amber-700">
+                        <tr><th className="text-left">Page</th><th className="text-left">Name</th><th className="text-left">EPIC</th><th className="text-left">Error</th></tr>
+                      </thead>
+                      <tbody>
+                        {pdfJob.failed_rows.map((r, i) => (
+                          <tr key={i} className="border-t border-amber-100">
+                            <td className="py-1 font-mono">{r.page}</td>
+                            <td className="py-1">{r.name || <span className="text-amber-500">—</span>}</td>
+                            <td className="py-1 font-mono">{r.epic || <span className="text-amber-500">—</span>}</td>
+                            <td className="py-1 text-amber-700">{r.error}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
               )}
             </div>
           )}
+
           <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-            <strong>Tip:</strong> Works best on text-based EC PDFs. Scanned-image PDFs require OCR (coming soon). For best accuracy, also try the Excel template above.
+            <strong>Tip:</strong> System tries fast text extraction first. If a page has &lt; 80 characters of extractable text,
+            it falls back to OCR automatically. For purely scanned PDFs, enable <em>Force OCR</em> above. Hindi + English supported.
           </div>
         </Card>
       </div>

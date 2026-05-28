@@ -1185,176 +1185,323 @@ async def voter_slip_data(voter_id: str, user=Depends(get_current_user)):
     return {"voter": v, "booth": booth, "org": org, "settings": settings}
 
 
-# ---------- PDF VOTER IMPORT (Election Commission style rolls) ----------
+# ---------- PDF VOTER IMPORT — OCR-enabled background job ----------
+# Supports BOTH text-based EC PDFs AND scanned electoral roll images.
+# For text PDFs: pdfplumber extracts directly (fast).
+# For scanned PDFs: pdf2image rasterizes each page, Tesseract OCRs with hin+eng,
+# then regex parser extracts voter blocks (name, father/husband, age, gender,
+# house, EPIC). Jobs run in background; UI polls /jobs/{id} for live progress.
+
+import asyncio as _asyncio_pdf
+import re as _re_pdf
+
+_PDF_TESS_LANGS = "hin+eng"
+_PDF_OCR_DPI = 200  # balance between accuracy & speed (~3-5s/page)
+_PDF_MIN_TEXT_CHARS_PER_PAGE = 80  # below this → assume scanned page, run OCR
+
+_EPIC_RE = _re_pdf.compile(r"\b([A-Z]{2,4}[/-]?\d{6,10}|[A-Z]{3}\d{7})\b")
+_AGE_RE = _re_pdf.compile(r"(?:Age|आयु|उम्र)\s*[:\-]?\s*(\d{1,3})", _re_pdf.I)
+_GENDER_RE = _re_pdf.compile(r"(?:Gender|लिंग)\s*[:\-]?\s*(male|female|f|m|other|पुरुष|महिला|स्त्री|पु|म)", _re_pdf.I)
+_NAME_RE = _re_pdf.compile(r"(?:Name|नाम)\s*[:\-]?\s*([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s\.]+?)(?=\n|Father|Husband|Age|Gender|EPIC|ID|House|पिता|पति|आयु|लिंग|मकान|$)", _re_pdf.I)
+_RELNAME_RE = _re_pdf.compile(r"(?:Father['s]*\s*Name|Husband['s]*\s*Name|F/H\s*Name|Relation|पिता|पति)\s*[:\-]?\s*([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s\.]+?)(?=\n|Age|Gender|EPIC|ID|House|आयु|लिंग|मकान|$)", _re_pdf.I)
+_HOUSE_RE = _re_pdf.compile(r"(?:House\s*No|H[\s]*No\.?|मकान\s*नं\.?|मकान\s*संख्या)\s*[:\-]?\s*([A-Za-z0-9\-\/]+)", _re_pdf.I)
+
+
+def _normalize_gender(raw: str) -> Optional[str]:
+    if not raw: return None
+    g = raw.strip().lower()
+    if g.startswith(("f", "महिला", "स्त्री", "म")): return "female"
+    if g.startswith(("m", "पुरुष", "पु")): return "male"
+    if g.startswith("o"): return "other"
+    return None
+
+
+def _parse_voter_blocks(text: str) -> List[dict]:
+    """Parse voter records from raw extracted/OCR text.
+       Strategy: split on EPIC matches (each voter has one), then extract fields per block.
+       Falls back to double-newline blocks if no EPICs found.
+    """
+    if not text or not text.strip():
+        return []
+    epics = list(_EPIC_RE.finditer(text))
+    if epics:
+        blocks = []
+        for i, m in enumerate(epics):
+            start = epics[i - 1].end() if i > 0 else max(0, m.start() - 400)
+            end = epics[i + 1].start() if i + 1 < len(epics) else min(len(text), m.end() + 100)
+            blocks.append(text[start:end])
+    else:
+        blocks = [b for b in _re_pdf.split(r"\n\s*\n", text) if b.strip() and len(b.strip()) > 20]
+
+    parsed = []
+    for blk in blocks:
+        epic_m = _EPIC_RE.search(blk)
+        name_m = _NAME_RE.search(blk)
+        rel_m = _RELNAME_RE.search(blk)
+        age_m = _AGE_RE.search(blk)
+        gender_m = _GENDER_RE.search(blk)
+        house_m = _HOUSE_RE.search(blk)
+
+        name = (name_m.group(1).strip(" .\n\r\t") if name_m else "")
+        if not name and epic_m:
+            # Take last few capitalized / Devanagari tokens before the EPIC
+            pre = blk[:epic_m.start()].strip().split("\n")[-1]
+            toks = [t for t in pre.split() if (t and (t[0].isupper() or any('\u0900' <= c <= '\u097F' for c in t)))]
+            name = " ".join(toks[-4:]).strip(" .,")
+        if not name or len(name) < 2:
+            continue
+
+        age = None
+        if age_m:
+            try:
+                age = int(age_m.group(1))
+                if age < 18 or age > 120: age = None
+            except Exception:
+                pass
+
+        parsed.append({
+            "name": name[:80],
+            "father_husband_name": (rel_m.group(1).strip(" .\n\r\t")[:80] if rel_m else None),
+            "epic": (epic_m.group(1).replace(" ", "").replace("-", "").replace("/", "") if epic_m else None),
+            "age": age,
+            "gender": _normalize_gender(gender_m.group(1) if gender_m else ""),
+            "house_no": (house_m.group(1).strip()[:50] if house_m else ""),
+            "raw_block": blk[:500],
+        })
+    return parsed
+
+
+def _ocr_page_image(img) -> str:
+    """Run Tesseract OCR on a PIL image. Returns extracted text."""
+    import pytesseract
+    try:
+        return pytesseract.image_to_string(img, lang=_PDF_TESS_LANGS, config="--psm 6")
+    except Exception as e:
+        logger.warning(f"OCR failed on page: {e}")
+        return ""
+
+
+async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dict, force_ocr: bool = False):
+    """Background worker: page-by-page extract → parse → insert voters; updates job progress."""
+    import pdfplumber
+    from io import BytesIO
+    from pdf2image import convert_from_bytes
+
+    try:
+        # Count pages first
+        with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+            total_pages = len(pdf.pages)
+        await db.pdf_import_jobs.update_one(
+            {"id": job_id},
+            {"$set": {"total_pages": total_pages, "status": "processing", "started_at": now_iso()}},
+        )
+
+        inserted = 0
+        skipped_dup = 0
+        failed = []
+        all_blocks = 0
+
+        for page_idx in range(total_pages):
+            page_num = page_idx + 1
+            page_text = ""
+            used_ocr = False
+
+            # Try text extraction first (unless force_ocr)
+            if not force_ocr:
+                try:
+                    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+                        page_text = pdf.pages[page_idx].extract_text() or ""
+                except Exception as e:
+                    logger.warning(f"pdfplumber failed page {page_num}: {e}")
+                    page_text = ""
+
+            # Fallback to OCR if extracted text is too sparse → likely scanned page
+            if force_ocr or len(page_text.strip()) < _PDF_MIN_TEXT_CHARS_PER_PAGE:
+                try:
+                    images = await _asyncio_pdf.to_thread(
+                        convert_from_bytes, pdf_bytes,
+                        dpi=_PDF_OCR_DPI, first_page=page_num, last_page=page_num,
+                    )
+                    if images:
+                        ocr_text = await _asyncio_pdf.to_thread(_ocr_page_image, images[0])
+                        if len(ocr_text.strip()) > len(page_text.strip()):
+                            page_text = ocr_text
+                            used_ocr = True
+                except Exception as e:
+                    failed.append({"page": page_num, "error": f"OCR error: {str(e)[:150]}"})
+                    logger.error(f"OCR exception on page {page_num}: {e}")
+
+            # Parse blocks from this page
+            page_blocks = _parse_voter_blocks(page_text)
+            all_blocks += len(page_blocks)
+
+            for blk in page_blocks:
+                try:
+                    epic = blk.get("epic")
+                    if epic:
+                        existing = await db.voters.find_one({"voter_id_number": epic, "org_id": user["org_id"]})
+                        if existing:
+                            skipped_dup += 1
+                            continue
+
+                    surname = extract_surname(blk["name"])
+                    family_id = auto_family_id(blk["house_no"], surname) if blk.get("house_no") else None
+                    voter_doc = {
+                        "id": str(uuid.uuid4()),
+                        "booth_id": booth["id"],
+                        "name": blk["name"],
+                        "voter_id_number": epic,
+                        "age": blk.get("age"),
+                        "gender": blk.get("gender"),
+                        "address": blk.get("house_no", ""),
+                        "phone": None, "email": None,
+                        "caste": None, "religion": None, "occupation": None,
+                        "political_preference": None, "sentiment": None,
+                        "issues": [], "likely_to_vote": None,
+                        "notes": f"Imported from PDF{' (OCR)' if used_ocr else ''} pg {page_num}",
+                        "custom_fields": {"father_husband_name": blk.get("father_husband_name")},
+                        "org_id": user["org_id"],
+                        "surname": surname,
+                        "family_id": family_id,
+                        "surveyed_by": user["id"],
+                        "surveyed_by_name": user["name"],
+                        "surveyed_at": now_iso(),
+                        "import_job_id": job_id,
+                    }
+                    await db.voters.insert_one(voter_doc)
+                    inserted += 1
+                except Exception as e:
+                    failed.append({
+                        "page": page_num,
+                        "name": blk.get("name", ""),
+                        "epic": blk.get("epic"),
+                        "error": str(e)[:150],
+                    })
+
+            # Progress update after each page
+            await db.pdf_import_jobs.update_one(
+                {"id": job_id},
+                {"$set": {
+                    "pages_processed": page_num,
+                    "inserted": inserted,
+                    "skipped_duplicates": skipped_dup,
+                    "failed_count": len(failed),
+                    "blocks_detected": all_blocks,
+                    "ocr_used": used_ocr or bool(force_ocr),
+                    "updated_at": now_iso(),
+                }},
+            )
+
+        # Final state
+        await db.pdf_import_jobs.update_one(
+            {"id": job_id},
+            {"$set": {
+                "status": "completed",
+                "inserted": inserted,
+                "skipped_duplicates": skipped_dup,
+                "failed_count": len(failed),
+                "failed_rows": failed[:200],  # cap stored failures
+                "blocks_detected": all_blocks,
+                "completed_at": now_iso(),
+            }},
+        )
+        await audit_log(user, "pdf_import_completed", {
+            "job_id": job_id, "pages": total_pages,
+            "inserted": inserted, "skipped": skipped_dup, "failed": len(failed),
+            "booth": booth.get("booth_number"),
+        })
+    except Exception as e:
+        logger.exception(f"PDF import job {job_id} crashed")
+        await db.pdf_import_jobs.update_one(
+            {"id": job_id},
+            {"$set": {"status": "failed", "error": str(e)[:300], "completed_at": now_iso()}},
+        )
+
+
 @api.post("/import/voters-pdf")
 async def import_voters_pdf(
     file: UploadFile = File(...),
     booth_number: Optional[str] = None,
+    force_ocr: bool = False,
     user=Depends(require_roles("admin", "campaign_manager", "supervisor", "data_operator")),
 ):
-    """Extract voter records from a PDF electoral roll. Best on text-based PDFs.
-       For scanned-image PDFs, OCR is a future enhancement."""
-    import pdfplumber, re
-    from io import BytesIO
-
+    """Submit a PDF electoral roll for import.
+       Auto-detects scanned vs text PDFs and runs Tesseract OCR (hin+eng) when needed.
+       Returns a job_id immediately. Poll GET /import/voters-pdf/jobs/{job_id} for progress.
+    """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "PDF file required")
+    if not booth_number:
+        raise HTTPException(400, "booth_number is required")
     content = await file.read()
-    if len(content) > 25 * 1024 * 1024:
-        raise HTTPException(400, "PDF too large (max 25 MB)")
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(400, "PDF too large (max 50 MB)")
 
-    # Resolve target booth (existing or auto-create)
-    booth = None
-    if booth_number:
-        booth = await db.booths.find_one({"booth_number": booth_number, "org_id": user["org_id"]})
-        if not booth:
-            booth = {
-                "id": str(uuid.uuid4()),
-                "name": f"Booth {booth_number}",
-                "booth_number": booth_number,
-                "ward": "Imported",
-                "constituency": "",
-                "location": "",
-                "target_voters": 0,
-                "supervisor_id": None,
-                "assigned_workers": [],
-                "org_id": user["org_id"],
-                "created_at": now_iso(),
-            }
-            await db.booths.insert_one(dict(booth))
+    # Resolve or auto-create booth
+    booth = await db.booths.find_one({"booth_number": booth_number, "org_id": user["org_id"]})
+    if not booth:
+        booth = {
+            "id": str(uuid.uuid4()),
+            "name": f"Booth {booth_number}", "booth_number": booth_number,
+            "ward": "Imported", "constituency": "", "location": "",
+            "target_voters": 0, "supervisor_id": None, "assigned_workers": [],
+            "org_id": user["org_id"], "created_at": now_iso(),
+        }
+        await db.booths.insert_one(dict(booth))
 
-    extracted = []
-    pages_count = 0
-    raw_text = ""
-    try:
-        with pdfplumber.open(BytesIO(content)) as pdf:
-            pages_count = len(pdf.pages)
-            for page in pdf.pages:
-                t = page.extract_text() or ""
-                raw_text += t + "\n"
-    except Exception as e:
-        raise HTTPException(400, f"PDF parse error: {e}")
-
-    # EC PDF heuristics — try common patterns:
-    # Name: <name>     Husband/Father Name: <relname>
-    # Age: <n>     Gender: <m/f>     House No: <h>     ID/EPIC: <code>
-
-    epic_pattern = re.compile(r"\b([A-Z]{2,3}\s?[/-]?\s?\d{6,8})\b")
-    age_pattern = re.compile(r"Age\s*[:\-]?\s*(\d{1,3})", re.I)
-    gender_pattern = re.compile(r"Gender\s*[:\-]?\s*(male|female|f|m|other)", re.I)
-    name_pattern = re.compile(r"(?:Name|नाम)\s*[:\-]?\s*([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s\.]+?)(?:\n|Father|Husband|Age|Gender|EPIC|ID)", re.I)
-    relname_pattern = re.compile(r"(?:Father['s]*\s*Name|Husband['s]*\s*Name|पिता|पति|F/H Name)\s*[:\-]?\s*([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s\.]+?)(?:\n|Age|Gender|EPIC|ID|House)", re.I)
-    house_pattern = re.compile(r"(?:House\s*No|H[\s]*No|मकान\s*नं)\s*[:\-]?\s*([A-Za-z0-9\-\/]+)", re.I)
-
-    # Split text into voter blocks — heuristic: split on EPIC matches
-    epics = list(epic_pattern.finditer(raw_text))
-    if not epics:
-        # Fallback: split on double-newline blocks
-        blocks = [b for b in re.split(r"\n\s*\n", raw_text) if b.strip()]
-    else:
-        blocks = []
-        for i, m in enumerate(epics):
-            start = epics[i - 1].end() if i > 0 else 0
-            end = epics[i + 1].start() if i + 1 < len(epics) else len(raw_text)
-            blocks.append(raw_text[max(0, start - 200):end])
-
-    inserted = 0
-    skipped = 0
-    errors = []
-
-    for idx, blk in enumerate(blocks, 1):
-        try:
-            epic_m = epic_pattern.search(blk)
-            name_m = name_pattern.search(blk)
-            rel_m = relname_pattern.search(blk)
-            age_m = age_pattern.search(blk)
-            gender_m = gender_pattern.search(blk)
-            house_m = house_pattern.search(blk)
-
-            if not (name_m or epic_m):
-                continue
-
-            name = (name_m.group(1).strip() if name_m else "").strip(" .")
-            if not name and epic_m:
-                # last resort: take 2-4 capitalized words before EPIC
-                pre = blk[:epic_m.start()].strip().split("\n")[-1]
-                tokens = [t for t in pre.split() if t.istitle() or any('\u0900' <= c <= '\u097F' for c in t)]
-                name = " ".join(tokens[-4:])
-            if not name:
-                continue
-
-            gender = None
-            if gender_m:
-                g = gender_m.group(1).lower()
-                gender = "female" if g.startswith("f") else "male" if g.startswith("m") else "other"
-
-            age = None
-            if age_m:
-                try: age = int(age_m.group(1))
-                except: pass
-
-            # Use booth_number passed in (or skip)
-            if not booth:
-                errors.append({"row": idx, "error": "booth_number is required for PDF import"})
-                skipped += 1
-                continue
-
-            address = (house_m.group(1) if house_m else "").strip()
-            surname = extract_surname(name)
-            family_id = auto_family_id(address, surname) if address else None
-
-            voter_doc = {
-                "id": str(uuid.uuid4()),
-                "booth_id": booth["id"],
-                "name": name[:80],
-                "voter_id_number": (epic_m.group(1).replace(" ", "") if epic_m else None),
-                "age": age,
-                "gender": gender,
-                "address": address[:200] if address else "",
-                "phone": None,
-                "email": None,
-                "caste": None,
-                "religion": None,
-                "occupation": None,
-                "political_preference": None,
-                "sentiment": None,
-                "issues": [],
-                "likely_to_vote": None,
-                "notes": "Imported from PDF",
-                "custom_fields": {"father_husband_name": rel_m.group(1).strip(" .") if rel_m else None},
-                "org_id": user["org_id"],
-                "surname": surname,
-                "family_id": family_id,
-                "surveyed_by": user["id"],
-                "surveyed_by_name": user["name"],
-                "surveyed_at": now_iso(),
-            }
-            # Smart merge if EPIC already in DB
-            vid = voter_doc["voter_id_number"]
-            existing = await db.voters.find_one({"voter_id_number": vid, "org_id": user["org_id"]}) if vid else None
-            if existing:
-                skipped += 1
-                continue
-            await db.voters.insert_one(voter_doc)
-            inserted += 1
-        except Exception as e:
-            errors.append({"row": idx, "error": str(e)[:120]})
-            skipped += 1
-
-    await audit_log(user, "pdf_import", {
-        "file": file.filename, "pages": pages_count,
-        "inserted": inserted, "skipped": skipped, "booth": booth_number,
-    })
-
-    return {
+    job_id = str(uuid.uuid4())
+    job_doc = {
+        "id": job_id,
+        "org_id": user["org_id"],
+        "user_id": user["id"],
         "filename": file.filename,
-        "pages_processed": pages_count,
-        "blocks_detected": len(blocks),
-        "inserted": inserted,
-        "skipped": skipped,
-        "errors": errors[:20],
-        "booth_id": booth["id"] if booth else None,
+        "size_bytes": len(content),
+        "booth_id": booth["id"],
+        "booth_number": booth_number,
+        "force_ocr": bool(force_ocr),
+        "status": "queued",
+        "total_pages": 0,
+        "pages_processed": 0,
+        "inserted": 0,
+        "skipped_duplicates": 0,
+        "failed_count": 0,
+        "blocks_detected": 0,
+        "ocr_used": False,
+        "failed_rows": [],
+        "created_at": now_iso(),
     }
+    await db.pdf_import_jobs.insert_one(job_doc)
+
+    # Fire background task — don't await
+    _asyncio_pdf.create_task(_process_pdf_job(job_id, content, user, booth, force_ocr=force_ocr))
+
+    return {"job_id": job_id, "status": "queued", "booth_id": booth["id"], "filename": file.filename}
+
+
+@api.get("/import/voters-pdf/jobs/{job_id}")
+async def get_pdf_import_job(job_id: str, user=Depends(get_current_user)):
+    job = await db.pdf_import_jobs.find_one({"id": job_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    # Progress percent
+    tp = job.get("total_pages") or 0
+    pp = job.get("pages_processed") or 0
+    job["progress_percent"] = round((pp / tp) * 100, 1) if tp else 0
+    return job
+
+
+@api.get("/import/voters-pdf/jobs")
+async def list_pdf_import_jobs(user=Depends(require_roles("admin", "campaign_manager", "supervisor", "data_operator")),
+                                limit: int = 20):
+    jobs = await db.pdf_import_jobs.find(
+        {"org_id": user["org_id"]},
+        {"_id": 0, "failed_rows": 0},
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    for j in jobs:
+        tp = j.get("total_pages") or 0
+        pp = j.get("pages_processed") or 0
+        j["progress_percent"] = round((pp / tp) * 100, 1) if tp else 0
+    return jobs
 
 
 # ---------- AUDIT LOG ----------
