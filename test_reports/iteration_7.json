@@ -1,0 +1,34 @@
+{
+  "summary": "Iter-7 Election Context for white-label APK Builder — comprehensive backend + frontend testing completed successfully. 17/17 pytest cases pass (apk-config shape, auth gating, PATCH validation/persistence, TWA manifest dynamics, icon priority, _viqso meta, ZIP README, iter-5 regression). Frontend dialog verified end-to-end: all 11 election-context testids present, all 7 election-type options, pre-fill from backend works, reactive preview updates after Save (ward → Lok Sabha switch verified). No critical issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ApkBuilderDialog → election-type <select>", "issues": ["Dev-only console warning: '<span> cannot be a child of <option>' — caused by Emergent's debug instrumentation (x-component wrappers) injecting <span> nodes inside <option>{et.label}</option>. Functional behavior is correct; this won't appear in production builds, but if it does, replace the JSX expression with a plain string template like `${et.label} — ${et.short}` to avoid React wrapping the dynamic part in a span."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter7.py",
+    "/app/test_reports/pytest/iter7_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PATCH /election-context returns updates as a list of dict KEYS (settings doc keys, e.g. 'logo_url', 'org_id'), not the inverse-mapped API field names. The org_id key leaks into the updates response — purely cosmetic but consider filtering it out before returning, and consider returning {field: new_value} pairs so the UI could show a diff.",
+    "_build_twa_manifest reads settings_doc twice in get_apk_config (once in helper, once in endpoint). Minor — could be passed through to avoid the second DB hit.",
+    "ApkBuilderDialog.jsx now ~470 lines — borderline. Consider extracting the Election Context <section> into its own file (ElectionContextEditor.jsx) for readability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter7.py (new)"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (all flows verified)"},
+  "test_credentials": "Super-admin: X-Super-Admin-Key=VIQSO-MASTER-2026-XKL9PQR4 ; AAP org id=aap-mumbai-w20-001",
+  "seed_data_creation": "Tests mutate AAP's settings doc (party_symbol_url, candidate_name, election_type, etc.) and restore the original snapshot via a module-scoped fixture teardown. Final restored state after the run = the snapshot captured at module setup (currently lok_sabha + Abhishek Dubey + Andheri West Vidhan Sabha / 15 Feb 2026 — already verified via UI screenshot).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-7 is clean. AAP org settings end the run with: election_type=lok_sabha (or vidhan_sabha — see last PATCH in fixture), candidate_name='Abhishek Dubey', election_scope_name='Andheri West Vidhan Sabha', election_date='15 Feb 2026', party_symbol_url and party_logo_url set to wikimedia URLs. ELECTION_TYPE_META is at /app/backend/server.py:725 with 7 keys. The PATCH endpoint maps party_logo_url→logo_url in the settings collection (note: NOT party_logo_url). 'other' election_type is accepted and maps to {label:'Election', short:'Elec'}.",
+  "rca of the issue": "N/A — no bugs found. Single console warning is dev-instrumentation artifact (Emergent x-component wrappers), not a code bug."
+}

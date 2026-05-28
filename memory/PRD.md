@@ -63,16 +63,28 @@ JWT auth, booth/voter/visit CRUD, analytics, dashboard.
 | iter-4 Demo Org | `VIQSO-WK2JHQACD5` | demo1@test.com / demo123 (expires 2026-05-31, watermark: SALES DEMO) |
 | Super-Admin Master Key | `VIQSO-MASTER-2026-XKL9PQR4` | header: X-Super-Admin-Key |
 
+### iter-6 — OCR-enabled EC PDF Import (13/13 ✓ pytest + frontend verified) [2026-05-28]
+- **Tesseract 5.3 + Hindi langpack** installed system-wide; `pytesseract` + `pdf2image` + `poppler-utils`
+- **Smart text-vs-scan detection**: pdfplumber tries text extraction per page; pages with <80 chars trigger OCR fallback automatically
+- **Async background job pattern**: POST returns `{job_id}` immediately, frontend polls `GET /import/voters-pdf/jobs/{job_id}` every 2s
+- **Parses**: Voter Name, Father/Husband Name, Age, Gender, House No, EPIC (English + Devanagari regex patterns)
+- **Job collection** `pdf_import_jobs`: tracks total_pages, pages_processed, inserted, skipped_duplicates, failed_count, blocks_detected, ocr_used, failed_rows[], progress_percent
+- **Force OCR toggle** in UI for purely scanned PDFs
+- **Frontend Import.jsx**: useEffect polling, progress bar, OCR badge, failed-rows accordion (page/name/epic/error)
+- Multi-page support; multi-tenancy strict (jobs scoped per `org_id`); duplicate detection via EPIC
+
 ## Backlog
 ### P1
-- White-label APK strategy (TWA/Bubblewrap wrap of PWA, or confirm dynamic PWA is sufficient) **— DONE in iter-5**
-- Modularize server.py (~2100 lines → routers/ split: auth, orgs, voters, booths, surveys, import_pdf, audit, warroom, apk)
-- Backfill legacy orgs with `is_demo=false/watermark=null/expires_at=null` (cosmetic — UI already tolerates undefined)
-- Frontend visual integration of demo watermark overlay across the app (backend exposes it, UI overlay TBD)
-- PDF import: add `import_batch_id` on voters for one-click rollback of bad imports
-- Audit-logs pagination cursor (timestamp-based)
-- Fix iter-3 voter count drift (122 vs expected 120 in VIQSO seed)
-- Optional: route `/.well-known/assetlinks.json` (root) → `/api/.well-known/assetlinks.json` at hosting layer so TWA verification works out of the box
+- White-label APK strategy **— DONE in iter-5**
+- OCR import **— DONE in iter-6**
+- Modularize server.py (~2400 lines → routers/ split)
+- Demo watermark visual overlay UI
+- PDF import: import_batch_id rollback (note: voters now carry `import_job_id` — UI rollback action pending)
+- Audit-logs pagination cursor
+- Background job recovery: sweep stale "processing" jobs on backend startup
+- Concurrency cap (semaphore) for parallel OCR uploads
+- OCR DPI auto-tune (200 default, 300 for low-confidence retries)
+- Optional: route `/.well-known/assetlinks.json` (root) → `/api/.well-known/assetlinks.json` at hosting layer
 
 ### P2
 - AI features via Emergent LLM Key: sentiment analysis on survey notes, issue clustering, speech-line suggestions

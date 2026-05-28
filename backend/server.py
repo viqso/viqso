@@ -713,8 +713,23 @@ DEFAULT_SETTINGS = {
     "candidate_bio": "",
     "constituency_name": "",  # e.g. "Ward 20, Mumbai"
     "election_date": "",  # e.g. "15 Feb 2026"
+    # Election context (used by white-label APK + voter slip)
+    "party_symbol_url": "",  # EC-allotted symbol (broom, lotus, hand) — separate from party logo
+    "election_type": "ward",  # ward | municipal | vidhan_sabha | lok_sabha | zilla_parishad | panchayat | other
+    "election_scope_name": "",  # human label, e.g. "Ward 20, Andheri West" / "Mumbai South Lok Sabha"
     "slip_footer_message": "Kripya apna matdaan zaroor karein",
     "whatsapp_template": "",  # Optional custom template
+}
+
+# Election type → (human label, short code, default scope prefix)
+ELECTION_TYPE_META = {
+    "ward":            {"label": "Ward Election",            "short": "Ward",  "scope_prefix": "Ward"},
+    "municipal":       {"label": "Municipal Election",       "short": "MC",    "scope_prefix": "Municipal Corp."},
+    "vidhan_sabha":    {"label": "Vidhan Sabha (Assembly)",  "short": "MLA",   "scope_prefix": "Assembly Const."},
+    "lok_sabha":       {"label": "Lok Sabha (Parliament)",   "short": "MP",    "scope_prefix": "Parl. Const."},
+    "zilla_parishad":  {"label": "Zilla Parishad",           "short": "ZP",    "scope_prefix": "ZP Circle"},
+    "panchayat":       {"label": "Gram Panchayat",           "short": "GP",    "scope_prefix": "Panchayat"},
+    "other":           {"label": "Election",                 "short": "Elec",  "scope_prefix": ""},
 }
 
 class SettingsUpdate(BaseModel):
@@ -735,6 +750,9 @@ class SettingsUpdate(BaseModel):
     candidate_bio: Optional[str] = None
     constituency_name: Optional[str] = None
     election_date: Optional[str] = None
+    party_symbol_url: Optional[str] = None
+    election_type: Optional[str] = None
+    election_scope_name: Optional[str] = None
     slip_footer_message: Optional[str] = None
     whatsapp_template: Optional[str] = None
 
@@ -1586,23 +1604,41 @@ def _default_package_id(org: dict) -> str:
 
 async def _build_twa_manifest(org: dict, request: Request, package_id: Optional[str] = None,
                               signing_fingerprint: Optional[str] = None) -> dict:
-    """Produce a Bubblewrap-compatible twa-manifest.json dict for the given org."""
+    """Produce a Bubblewrap-compatible twa-manifest.json dict for the given org.
+       Bakes party + candidate + symbol + election-type into the launcher metadata."""
     settings_doc = await db.settings.find_one({"org_id": org["id"]}, {"_id": 0}) or dict(DEFAULT_SETTINGS)
     party_name = settings_doc.get("party_name") or org.get("party_name") or "Voter CRM"
     short = settings_doc.get("party_short_name") or party_name[:12]
     logo = settings_doc.get("logo_url") or DEFAULT_SETTINGS.get("logo_url") or ""
+    symbol = settings_doc.get("party_symbol_url") or ""
     theme = settings_doc.get("primary_color") or "#0B1020"
     bg = settings_doc.get("background_color") or "#FFFFFF"
+    candidate = (settings_doc.get("candidate_name") or "").strip()
+    constituency = (settings_doc.get("election_scope_name") or settings_doc.get("constituency_name") or "").strip()
+    election_date = (settings_doc.get("election_date") or "").strip()
+    etype = (settings_doc.get("election_type") or "ward").lower()
+    emeta = ELECTION_TYPE_META.get(etype, ELECTION_TYPE_META["other"])
+
+    # Build election context label — e.g. "Lok Sabha · Mumbai South" or "Ward Election · Ward 20"
+    election_label_parts = [emeta["label"]]
+    if constituency: election_label_parts.append(constituency)
+    election_label = " · ".join(election_label_parts)
+
+    # App name: "{Candidate} · {ElectionShort}" if candidate set, else "{Party} CRM"
+    if candidate:
+        app_name = f"{candidate} — {emeta['label']}"
+        launcher_name = f"{candidate.split()[0]} ({emeta['short']})"
+    else:
+        app_name = f"{party_name} — {emeta['label']}"
+        launcher_name = (short or party_name)[:12]
 
     # Host must be the PUBLIC PWA URL (for TWA Digital Asset Links verification).
-    # Priority: PUBLIC_APP_URL env > X-Forwarded-Host header > frontend/.env > request.base_url
     public_url = os.environ.get("PUBLIC_APP_URL", "").rstrip("/")
     if not public_url:
         fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
         if fwd_host and "cluster" not in fwd_host and "localhost" not in fwd_host:
             public_url = f"https://{fwd_host}"
     if not public_url:
-        # Read from frontend/.env as last resort
         try:
             fe_env = Path(__file__).parent.parent / "frontend" / ".env"
             if fe_env.exists():
@@ -1620,14 +1656,18 @@ async def _build_twa_manifest(org: dict, request: Request, package_id: Optional[
     pkg = package_id or org.get("apk_package_id") or _default_package_id(org)
     fp = signing_fingerprint or org.get("apk_signing_fingerprint") or ""
 
-    # If logo is a data: URL or absolute http(s), preserve it. Else prefix with public host.
-    icon_url = logo if (logo.startswith("data:") or logo.startswith("http")) else f"{public_url}{logo or '/logo192.png'}"
+    # Icon priority: party_symbol_url (EC symbol) > logo_url > placeholder
+    def _absolutize(u: str) -> str:
+        if not u: return ""
+        if u.startswith("data:") or u.startswith("http"): return u
+        return f"{public_url}{u}"
+    icon_url = _absolutize(symbol or logo or "/logo192.png")
 
     return {
         "packageId": pkg,
         "host": host_only,
-        "name": f"{party_name} — Voter CRM",
-        "launcherName": short,
+        "name": app_name,
+        "launcherName": launcher_name,
         "display": "standalone",
         "themeColor": theme,
         "navigationColor": theme,
@@ -1636,11 +1676,15 @@ async def _build_twa_manifest(org: dict, request: Request, package_id: Optional[
         "navigationDividerColorDark": theme,
         "backgroundColor": bg,
         "enableNotifications": False,
-        "startUrl": f"/?ak={org.get('access_key', '')}",
+        "startUrl": f"/?ak={org.get('access_key', '')}&et={etype}",
         "iconUrl": icon_url,
         "maskableIconUrl": icon_url,
         "monochromeIconUrl": "",
-        "shortcuts": [],
+        "shortcuts": [
+            {"name": "Voter slip", "shortName": "Slip", "url": "/voters", "iconUrl": icon_url},
+            {"name": "Surveys",    "shortName": "Survey", "url": "/surveys", "iconUrl": icon_url},
+            {"name": "War Room",   "shortName": "Live",  "url": "/war-room", "iconUrl": icon_url},
+        ],
         "generatorApp": "viqso-saas",
         "webManifestUrl": f"{public_url}/api/manifest?access_key={org.get('access_key', '')}",
         "fallbackType": "customtabs",
@@ -1665,6 +1709,17 @@ async def _build_twa_manifest(org: dict, request: Request, package_id: Optional[
             "org_name": org.get("name"),
             "access_key": org.get("access_key"),
             "generated_at": now_iso(),
+            "party_name": party_name,
+            "party_short_name": short,
+            "party_symbol_url": _absolutize(symbol) if symbol else "",
+            "party_logo_url": _absolutize(logo) if logo else "",
+            "candidate_name": candidate,
+            "candidate_photo_url": _absolutize(settings_doc.get("candidate_photo_url") or ""),
+            "constituency": constituency,
+            "election_type": etype,
+            "election_label": election_label,
+            "election_date": election_date,
+            "theme_color": theme,
         },
     }
 
@@ -1677,18 +1732,95 @@ async def get_apk_config(org_id: str, request: Request, _=Depends(require_super_
     org = await db.organizations.find_one({"id": org_id}, {"_id": 0})
     if not org:
         raise HTTPException(404, "Org not found")
+    settings_doc = await db.settings.find_one({"org_id": org_id}, {"_id": 0}) or dict(DEFAULT_SETTINGS)
     manifest = await _build_twa_manifest(org, request)
     return {
         "org_id": org_id,
         "package_id": manifest["packageId"],
         "host": manifest["host"],
         "launcher_name": manifest["launcherName"],
+        "app_name": manifest["name"],
         "theme_color": manifest["themeColor"],
         "start_url": manifest["startUrl"],
+        "icon_url": manifest["iconUrl"],
         "signing_fingerprint": org.get("apk_signing_fingerprint", ""),
         "twa_manifest": manifest,
         "pwabuilder_url": f"https://www.pwabuilder.com/reportcard?site={manifest['fullScopeUrl']}",
+        # Election context (so the UI can edit + preview)
+        "election_context": {
+            "party_name": settings_doc.get("party_name", ""),
+            "party_short_name": settings_doc.get("party_short_name", ""),
+            "party_logo_url": settings_doc.get("logo_url", ""),
+            "party_symbol_url": settings_doc.get("party_symbol_url", ""),
+            "candidate_name": settings_doc.get("candidate_name", ""),
+            "candidate_photo_url": settings_doc.get("candidate_photo_url", ""),
+            "candidate_position": settings_doc.get("candidate_position", ""),
+            "constituency_name": settings_doc.get("constituency_name", ""),
+            "election_scope_name": settings_doc.get("election_scope_name", ""),
+            "election_date": settings_doc.get("election_date", ""),
+            "election_type": settings_doc.get("election_type", "ward"),
+            "primary_color": settings_doc.get("primary_color", "#0B1020"),
+        },
+        "election_types": [{"value": k, "label": v["label"], "short": v["short"]} for k, v in ELECTION_TYPE_META.items()],
     }
+
+
+class ElectionContextUpdate(BaseModel):
+    party_name: Optional[str] = None
+    party_short_name: Optional[str] = None
+    party_logo_url: Optional[str] = None
+    party_symbol_url: Optional[str] = None
+    candidate_name: Optional[str] = None
+    candidate_photo_url: Optional[str] = None
+    candidate_position: Optional[str] = None
+    constituency_name: Optional[str] = None
+    election_scope_name: Optional[str] = None
+    election_date: Optional[str] = None
+    election_type: Optional[str] = None
+    primary_color: Optional[str] = None
+
+
+@api.patch("/orgs/{org_id}/election-context")
+async def update_election_context(org_id: str, body: ElectionContextUpdate, _=Depends(require_super_admin)):
+    """Super-admin endpoint to update the election/candidate context that gets baked
+    into the org's white-label APK (and also flows into voter slips, branding)."""
+    org = await db.organizations.find_one({"id": org_id})
+    if not org:
+        raise HTTPException(404, "Org not found")
+
+    raw = body.model_dump(exclude_none=True)
+    if "election_type" in raw and raw["election_type"] not in ELECTION_TYPE_META:
+        raise HTTPException(400, f"Invalid election_type. Allowed: {list(ELECTION_TYPE_META.keys())}")
+
+    # Map APK-config field names → settings doc field names
+    settings_updates = {}
+    field_map = {
+        "party_name": "party_name",
+        "party_short_name": "party_short_name",
+        "party_logo_url": "logo_url",
+        "party_symbol_url": "party_symbol_url",
+        "candidate_name": "candidate_name",
+        "candidate_photo_url": "candidate_photo_url",
+        "candidate_position": "candidate_position",
+        "constituency_name": "constituency_name",
+        "election_scope_name": "election_scope_name",
+        "election_date": "election_date",
+        "election_type": "election_type",
+        "primary_color": "primary_color",
+    }
+    for k, v in raw.items():
+        if k in field_map:
+            settings_updates[field_map[k]] = v
+    if not settings_updates:
+        return {"ok": True, "updates": {}}
+
+    settings_updates["org_id"] = org_id
+    await db.settings.update_one(
+        {"org_id": org_id},
+        {"$set": settings_updates, "$setOnInsert": {"id": "main"}},
+        upsert=True,
+    )
+    return {"ok": True, "updates": list(settings_updates.keys())}
 
 @api.patch("/orgs/{org_id}/apk-settings")
 async def update_apk_settings(org_id: str, body: ApkSettings, _=Depends(require_super_admin)):
@@ -1719,6 +1851,7 @@ async def download_apk_package(org_id: str, request: Request, _=Depends(require_
     if not org:
         raise HTTPException(404, "Org not found")
     manifest = await _build_twa_manifest(org, request)
+    meta = manifest.get("_viqso", {})
     pkg = manifest["packageId"]
     fp = (org.get("apk_signing_fingerprint") or "").strip()
 
@@ -1732,13 +1865,27 @@ async def download_apk_package(org_id: str, request: Request, _=Depends(require_
     }]
 
     safe_org = _re.sub(r"[^a-zA-Z0-9_-]+", "_", org.get("name", "org")).strip("_")
-    readme = f"""# {org.get('party_name') or org.get('name')} — Android APK Build
+    readme = f"""# {meta.get('party_name') or org.get('party_name') or org.get('name')} — Android APK Build
 
 Generated by VIQSO Digital Media SaaS on {now_iso()}
 
+## Election Context (baked into this APK)
+| Field            | Value |
+|------------------|-------|
+| Party            | {meta.get('party_name', '—')} ({meta.get('party_short_name', '—')}) |
+| Candidate        | {meta.get('candidate_name') or '— (not set)'} |
+| Election Type    | {meta.get('election_label', '—')} |
+| Constituency     | {meta.get('constituency') or '— (not set)'} |
+| Election Date    | {meta.get('election_date') or '— (not set)'} |
+| Symbol           | {meta.get('party_symbol_url') or '(falling back to logo)'} |
+| Logo             | {meta.get('party_logo_url') or '(default)'} |
+| Theme Color      | {meta.get('theme_color', '—')} |
+| App Display Name | {manifest['name']} |
+| Launcher Name    | {manifest['launcherName']} |
+
 ## What's in this bundle?
 - `twa-manifest.json` — Bubblewrap config for this org
-- `assetlinks.json` — Digital Asset Links for domain verification (host on your server)
+- `assetlinks.json` — Digital Asset Links for domain verification
 - `build.sh` — convenience build script
 - This README
 

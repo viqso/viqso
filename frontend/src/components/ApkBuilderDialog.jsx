@@ -6,7 +6,7 @@ import { Label } from "./ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "./ui/dialog";
-import { Smartphone, Download, ExternalLink, Copy, Loader2, CheckCircle2 } from "lucide-react";
+import { Smartphone, Download, ExternalLink, Copy, Loader2, CheckCircle2, Vote, User, Calendar, MapPin, Flag } from "lucide-react";
 import { toast } from "sonner";
 
 // White-label APK Builder — generates a Bubblewrap TWA project ZIP per org.
@@ -14,10 +14,13 @@ import { toast } from "sonner";
 export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingCtx, setSavingCtx] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [cfg, setCfg] = useState(null);
   const [packageId, setPackageId] = useState("");
   const [fingerprint, setFingerprint] = useState("");
+  const [ctx, setCtx] = useState({});
+  const [electionTypes, setElectionTypes] = useState([]);
 
   useEffect(() => {
     if (open && org) loadConfig();
@@ -42,6 +45,8 @@ export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) 
       setCfg(data);
       setPackageId(data.package_id || "");
       setFingerprint(data.signing_fingerprint || "");
+      setCtx(data.election_context || {});
+      setElectionTypes(data.election_types || []);
     } catch (err) {
       toast.error(err?.response?.data?.detail || err?.message || "Failed to load APK config");
     } finally {
@@ -63,6 +68,19 @@ export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) 
       toast.error(err?.response?.data?.detail || err?.message || "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveElectionContext = async () => {
+    setSavingCtx(true);
+    try {
+      await api.patch(`/orgs/${org.id}/election-context`, ctx, { headers: _superHeaders });
+      toast.success("Election context updated — APK will rebuild with new info");
+      await loadConfig();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || err?.message || "Save failed");
+    } finally {
+      setSavingCtx(false);
     }
   };
 
@@ -128,24 +146,171 @@ export default function ApkBuilderDialog({ org, superKey, open, onOpenChange }) 
           </div>
         ) : !cfg ? null : (
           <div className="space-y-5">
-            {/* Live preview */}
+            {/* Live preview — branded app launcher */}
             <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">App Preview</div>
-              <div className="mt-2 flex items-center gap-3">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">App Preview (what users see)</div>
+              <div className="mt-3 flex items-start gap-4">
                 <div
-                  className="flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-md"
+                  className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl text-white shadow-lg"
                   style={{ background: cfg.theme_color || "#0B1020" }}
+                  data-testid="apk-preview-icon"
                 >
-                  <span className="font-display text-lg font-bold">
-                    {(cfg.launcher_name || "VQ").slice(0, 2).toUpperCase()}
-                  </span>
+                  {cfg.icon_url ? (
+                    <img src={cfg.icon_url} alt="" className="h-full w-full object-cover" onError={(e) => { e.target.style.display = "none"; }} />
+                  ) : (
+                    <span className="font-display text-xl font-bold">
+                      {(cfg.launcher_name || "VQ").slice(0, 2).toUpperCase()}
+                    </span>
+                  )}
                 </div>
-                <div>
-                  <div className="font-display text-base font-bold text-slate-900">{cfg.launcher_name}</div>
-                  <code className="text-xs text-slate-500">{cfg.package_id}</code>
+                <div className="flex-1 min-w-0">
+                  <div className="font-display text-base font-bold text-slate-900 truncate" data-testid="apk-preview-app-name">{cfg.app_name}</div>
+                  <div className="text-xs text-slate-600 truncate">Launcher: <span className="font-mono">{cfg.launcher_name}</span></div>
+                  <code className="block truncate text-[10px] text-slate-400">{cfg.package_id}</code>
+                  {cfg.twa_manifest?._viqso?.election_label && (
+                    <div className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-white">
+                      <Vote className="h-3 w-3" /> {cfg.twa_manifest._viqso.election_label}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
+
+            {/* Election Context — what gets baked into the APK */}
+            <section>
+              <div className="mb-2 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">★</span>
+                <h3 className="text-sm font-bold text-slate-900">Election context (baked into APK)</h3>
+              </div>
+              <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+                <p className="text-[11px] text-amber-800">
+                  These fields control the APK's app name, launcher icon, candidate info & election scope.
+                  Changes here flow into the white-label APK <strong>and</strong> the voter slip / WhatsApp share.
+                </p>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <Label className="text-xs flex items-center gap-1"><Flag className="h-3 w-3" /> Party Name</Label>
+                    <Input
+                      value={ctx.party_name || ""}
+                      onChange={(e) => setCtx({ ...ctx, party_name: e.target.value })}
+                      placeholder="Aam Aadmi Party"
+                      data-testid="apk-party-name-input"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Party Short Name</Label>
+                    <Input
+                      value={ctx.party_short_name || ""}
+                      onChange={(e) => setCtx({ ...ctx, party_short_name: e.target.value })}
+                      placeholder="AAP"
+                      maxLength={12}
+                      data-testid="apk-party-short-name-input"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs flex items-center gap-1"><User className="h-3 w-3" /> Candidate Name</Label>
+                    <Input
+                      value={ctx.candidate_name || ""}
+                      onChange={(e) => setCtx({ ...ctx, candidate_name: e.target.value })}
+                      placeholder="Abhishek Dubey"
+                      data-testid="apk-candidate-name-input"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Candidate Position</Label>
+                    <Input
+                      value={ctx.candidate_position || ""}
+                      onChange={(e) => setCtx({ ...ctx, candidate_position: e.target.value })}
+                      placeholder="Corporator candidate"
+                      data-testid="apk-candidate-position-input"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label className="text-xs flex items-center gap-1"><Vote className="h-3 w-3" /> Election Type</Label>
+                    <select
+                      value={ctx.election_type || "ward"}
+                      onChange={(e) => setCtx({ ...ctx, election_type: e.target.value })}
+                      className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+                      data-testid="apk-election-type-select"
+                    >
+                      {electionTypes.map((et) => (
+                        <option key={et.value} value={et.value}>{et.label} — {et.short}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label className="text-xs flex items-center gap-1"><MapPin className="h-3 w-3" /> Constituency / Scope Name</Label>
+                    <Input
+                      value={ctx.election_scope_name || ctx.constituency_name || ""}
+                      onChange={(e) => setCtx({ ...ctx, election_scope_name: e.target.value })}
+                      placeholder="e.g. Andheri West Vidhan Sabha / Ward 20, Mumbai / Mumbai South Lok Sabha"
+                      data-testid="apk-constituency-input"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs flex items-center gap-1"><Calendar className="h-3 w-3" /> Election Date</Label>
+                    <Input
+                      value={ctx.election_date || ""}
+                      onChange={(e) => setCtx({ ...ctx, election_date: e.target.value })}
+                      placeholder="15 Feb 2026"
+                      data-testid="apk-election-date-input"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Theme Color</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="color"
+                        value={ctx.primary_color || "#0B1020"}
+                        onChange={(e) => setCtx({ ...ctx, primary_color: e.target.value })}
+                        className="h-10 w-14 cursor-pointer p-1"
+                        data-testid="apk-theme-color-input"
+                      />
+                      <Input
+                        value={ctx.primary_color || "#0B1020"}
+                        onChange={(e) => setCtx({ ...ctx, primary_color: e.target.value })}
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label className="text-xs">Party Symbol URL (EC-allotted symbol — used as APK icon)</Label>
+                    <Input
+                      value={ctx.party_symbol_url || ""}
+                      onChange={(e) => setCtx({ ...ctx, party_symbol_url: e.target.value })}
+                      placeholder="https://… (broom for AAP, lotus for BJP, hand for INC)"
+                      className="font-mono text-xs"
+                      data-testid="apk-party-symbol-input"
+                    />
+                    <p className="mt-1 text-[10px] text-amber-700">
+                      If blank, the party logo will be used as the launcher icon. Recommended: 512×512 PNG.
+                    </p>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label className="text-xs">Party Logo URL (used on slips & banners)</Label>
+                    <Input
+                      value={ctx.party_logo_url || ""}
+                      onChange={(e) => setCtx({ ...ctx, party_logo_url: e.target.value })}
+                      placeholder="https://…"
+                      className="font-mono text-xs"
+                      data-testid="apk-party-logo-input"
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  onClick={saveElectionContext}
+                  disabled={savingCtx}
+                  size="sm"
+                  className="bg-amber-600 text-white hover:bg-amber-700"
+                  data-testid="apk-save-context-button"
+                >
+                  {savingCtx ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <CheckCircle2 className="mr-2 h-3 w-3" />}
+                  Save election context & rebuild preview
+                </Button>
+              </div>
+            </section>
 
             {/* Step 1: Configure */}
             <section>
