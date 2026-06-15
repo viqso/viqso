@@ -29,7 +29,9 @@ const navItems = [
   { to: "/segregate", label: "Segregate", icon: Layers, roles: ["admin", "campaign_manager", "supervisor", "viewer"] },
   { to: "/families", label: "Families", icon: Home, roles: ["admin", "campaign_manager", "supervisor", "viewer"] },
   { to: "/visits", label: "Visits", icon: CalendarCheck, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker"] },
-  { to: "/import", label: "Import Data", icon: Upload, roles: ["admin", "campaign_manager", "supervisor", "data_operator"] },
+  // Voter data import is restricted to VIQSO Super-Admin only (handled at /super-admin)
+  // to prevent clients from uploading mixed-area voter lists themselves.
+  // { to: "/import", label: "Import Data", icon: Upload, roles: [...] },
   { to: "/analytics", label: "Analytics", icon: BarChart3, roles: ["admin", "campaign_manager", "supervisor", "viewer"] },
   { to: "/war-room", label: "War Room", icon: Tv, roles: ["admin", "campaign_manager", "supervisor"] },
   { to: "/audit", label: "Audit Logs", icon: ScrollText, roles: ["admin", "campaign_manager"] },

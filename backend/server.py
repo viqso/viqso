@@ -133,6 +133,30 @@ def require_super_admin(request: Request):
     return True
 
 
+async def require_super_admin_for_org(request: Request, target_org_id: Optional[str] = None):
+    """Dependency for super-admin-only endpoints that operate on a specific target org.
+       Requires X-Super-Admin-Key header AND a `target_org_id` query parameter (or 'org_id' header).
+       Returns a synthetic user dict scoped to the target org so existing code paths keep working.
+    """
+    key = request.headers.get("X-Super-Admin-Key", "")
+    if key != SUPER_ADMIN_KEY:
+        raise HTTPException(403, "Super-admin access required. Voter data import is restricted to VIQSO Super-Admin only.")
+    org_id = target_org_id or request.headers.get("X-Target-Org-Id") or request.query_params.get("target_org_id")
+    if not org_id:
+        raise HTTPException(400, "target_org_id is required (query param or X-Target-Org-Id header)")
+    org = await db.organizations.find_one({"id": org_id})
+    if not org:
+        raise HTTPException(404, f"Target org not found: {org_id}")
+    return {
+        "id": "viqso-super-admin",
+        "email": "super-admin@viqso.in",
+        "name": "VIQSO Super-Admin",
+        "role": "admin",
+        "org_id": org["id"],
+        "_is_super_admin_proxy": True,
+    }
+
+
 async def record_login_attempt(identifier: str, success: bool):
     if success:
         await db.login_attempts.delete_many({"identifier": identifier})
@@ -878,7 +902,8 @@ async def voter_template(_user=Depends(require_roles("admin", "supervisor"))):
 @api.post("/import/voters")
 async def bulk_upload_voters(
     file: UploadFile = File(...),
-    user=Depends(require_roles("admin", "supervisor")),
+    target_org_id: Optional[str] = None,
+    user=Depends(require_super_admin_for_org),
 ):
     from openpyxl import load_workbook
     from io import BytesIO
@@ -1299,14 +1324,121 @@ def _ocr_page_image(img) -> str:
         return ""
 
 
-async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dict, force_ocr: bool = False):
-    """Background worker: page-by-page extract → parse → insert voters; updates job progress."""
+# ---------- EC PDF page-header extractors ----------
+# Election Commission voter list PDFs print the polling-station context at the top
+# of every page (Vidhan Sabha constituency, Polling Station #, Section/Part, Address).
+# We extract these so each voter automatically gets the correct booth/area mapping.
+# Patterns are constrained to single line ([^\n]) to avoid cross-line value bleeding.
+_HDR_PATTERNS = {
+    "vidhan_sabha": _re_pdf.compile(
+        r"(?:Assembly\s+Constituency|Vidhan\s*Sabha|विधान\s*सभा|विधान\s*सभा\s*क्षेत्र)"
+        r"[\s:\-\.]*(?:No\.?\s*)?(?:(\d{1,4})\s*[\-—]\s*)?([A-Za-z\u0900-\u097F][^\n\r]{2,55}?)(?=\s{2,}|\s*$|[\r\n])",
+        _re_pdf.I,
+    ),
+    "lok_sabha": _re_pdf.compile(
+        r"(?:Parliamentary\s+Constituency|Lok\s*Sabha|लोक\s*सभा|लोक\s*सभा\s*क्षेत्र)"
+        r"[\s:\-\.]*(?:No\.?\s*)?(?:(\d{1,4})\s*[\-—]\s*)?([A-Za-z\u0900-\u097F][^\n\r]{2,55}?)(?=\s{2,}|\s*$|[\r\n])",
+        _re_pdf.I,
+    ),
+    "polling_station_no": _re_pdf.compile(
+        r"(?:Polling\s*Station|Booth|मतदान\s*केंद्र|मतदान\s*स्थान)"
+        r"\s*(?:No\.?|Number|संख्या|क्रमांक|न\.?)\s*[:\-\.]?\s*([0-9A-Z][0-9A-Z\-/]{0,8})(?=\s|$|[\r\n])",
+        _re_pdf.I,
+    ),
+    "polling_station_name": _re_pdf.compile(
+        r"(?:Polling\s*Station|Booth|मतदान\s*केंद्र|मतदान\s*स्थान)"
+        r"\s*Name\s*[:\-]?\s*([A-Za-z\u0900-\u097F][^\n\r]{3,80}?)(?=\s*$|[\r\n])",
+        _re_pdf.I,
+    ),
+    "part_no": _re_pdf.compile(r"(?:Part|भाग)\s*(?:No\.?|संख्या|न\.?)\s*[:\-]?\s*(\d{1,5})\b", _re_pdf.I),
+    "section_no": _re_pdf.compile(r"(?:Section|खण्ड|अनुभाग)\s*(?:No\.?|न\.?)\s*[:\-]?\s*(\d{1,5})\b", _re_pdf.I),
+    "ward": _re_pdf.compile(
+        r"(?:Ward|वार्ड|मुख्य\s*प्रभाग)\s*(?:No\.?|Number|Name|नाम|न\.?)?\s*[:\-]?\s*"
+        r"([A-Za-z\u0900-\u097F0-9][^\n\r]{0,50}?)(?=\s*$|\s{2,}|[\r\n])",
+        _re_pdf.I,
+    ),
+    "main_town": _re_pdf.compile(
+        r"(?:Main\s*Town|Mandal|District|तहसील|जिला|शहर)\s*[:\-]?\s*"
+        r"([A-Za-z\u0900-\u097F][^\n\r]{2,50}?)(?=\s{2,}|\s*$|[\r\n])",
+        _re_pdf.I,
+    ),
+    "address_area": _re_pdf.compile(
+        r"(?:Address\s+of\s+Polling\s+Station|Polling\s+Station\s+Address)\s*[:\-]?\s*"
+        r"([A-Za-z\u0900-\u097F][^\n\r]{5,120}?)(?=\s*$|[\r\n])",
+        _re_pdf.I,
+    ),
+    "state": _re_pdf.compile(r"(?:State|राज्य)\s*[:\-]?\s*([A-Za-z\u0900-\u097F][^\n\r]{2,30}?)(?=\s{2,}|\s*$|[\r\n])", _re_pdf.I),
+}
+
+
+def _parse_page_header(text: str) -> dict:
+    """Extract Election-Commission page header context from raw OCR/text.
+       Only the top portion of the page is scanned (first ~25 lines) where header lives.
+       Returns dict with keys: vidhan_sabha_no, vidhan_sabha_name, lok_sabha_no, lok_sabha_name,
+       polling_station_no, polling_station_name, part_no, section_no, ward, main_town,
+       address_area, state. Missing fields → empty string.
+    """
+    if not text:
+        return {}
+    # Take the top of the page where the EC header is always printed
+    head = "\n".join(text.splitlines()[:30])
+    out: dict = {}
+
+    def _g1(m, idx=1):
+        try: return (m.group(idx) or "").strip(" ,;:.\u00a0\t\r\n")
+        except Exception: return ""
+
+    m = _HDR_PATTERNS["vidhan_sabha"].search(head)
+    if m:
+        out["vidhan_sabha_no"] = _g1(m, 1)
+        out["vidhan_sabha_name"] = _g1(m, 2)
+    m = _HDR_PATTERNS["lok_sabha"].search(head)
+    if m:
+        out["lok_sabha_no"] = _g1(m, 1)
+        out["lok_sabha_name"] = _g1(m, 2)
+    m = _HDR_PATTERNS["polling_station_no"].search(head)
+    if m: out["polling_station_no"] = _g1(m)
+    m = _HDR_PATTERNS["polling_station_name"].search(head)
+    if m: out["polling_station_name"] = _g1(m)[:80]
+    m = _HDR_PATTERNS["part_no"].search(head)
+    if m: out["part_no"] = _g1(m)
+    m = _HDR_PATTERNS["section_no"].search(head)
+    if m: out["section_no"] = _g1(m)
+    m = _HDR_PATTERNS["ward"].search(head)
+    if m: out["ward"] = _g1(m)[:60]
+    m = _HDR_PATTERNS["main_town"].search(head)
+    if m: out["main_town"] = _g1(m)[:60]
+    m = _HDR_PATTERNS["address_area"].search(head)
+    if m: out["address_area"] = _g1(m)[:120]
+    m = _HDR_PATTERNS["state"].search(head)
+    if m: out["state"] = _g1(m)[:40]
+
+    # Drop empty values for cleaner output
+    return {k: v for k, v in out.items() if v}
+
+
+def _build_booth_number_from_header(header: dict) -> Optional[str]:
+    """Derive a stable booth_number from page header. Priority:
+       polling_station_no → part_no → polling_station_name (slugified)."""
+    if header.get("polling_station_no"): return f"PS-{header['polling_station_no']}"
+    if header.get("part_no"): return f"PART-{header['part_no']}"
+    if header.get("polling_station_name"):
+        slug = _re_pdf.sub(r"[^A-Za-z0-9]+", "-", header["polling_station_name"]).strip("-").upper()[:40]
+        if slug: return f"PS-{slug}"
+    return None
+
+
+async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, fallback_booth: Optional[dict],
+                           force_ocr: bool = False, auto_detect_booths: bool = True):
+    """Background worker: page-by-page extract → parse header + voter blocks → insert voters.
+       If auto_detect_booths is True, each page's voters go into a booth derived from the
+       page header (Polling Station no., Part No., or station name). Otherwise all voters
+       go into the fallback_booth provided at submission time."""
     import pdfplumber
     from io import BytesIO
     from pdf2image import convert_from_bytes
 
     try:
-        # Count pages first
         with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
             total_pages = len(pdf.pages)
         await db.pdf_import_jobs.update_one(
@@ -1316,15 +1448,52 @@ async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dic
 
         inserted = 0
         skipped_dup = 0
-        failed = []
+        failed: List[dict] = []
         all_blocks = 0
+        ocr_used_any = False
+        booth_cache: dict = {}  # booth_number → booth dict (avoids repeat DB lookups)
+        booths_created: List[dict] = []
+        headers_log: List[dict] = []
+
+        async def _resolve_booth(booth_number: str, header: dict) -> dict:
+            """Find or auto-create a booth from header context. Cached per job."""
+            if booth_number in booth_cache:
+                return booth_cache[booth_number]
+            existing = await db.booths.find_one({"booth_number": booth_number, "org_id": user["org_id"]})
+            if existing:
+                booth_cache[booth_number] = existing
+                return existing
+            new_booth = {
+                "id": str(uuid.uuid4()),
+                "name": header.get("polling_station_name") or f"Booth {booth_number}",
+                "booth_number": booth_number,
+                "ward": header.get("ward") or "Imported",
+                "constituency": header.get("vidhan_sabha_name") or header.get("lok_sabha_name") or "",
+                "location": header.get("address_area") or header.get("main_town") or "",
+                "target_voters": 0,
+                "supervisor_id": None,
+                "assigned_workers": [],
+                "org_id": user["org_id"],
+                "created_at": now_iso(),
+                "_auto_imported": True,
+                "_import_job_id": job_id,
+            }
+            await db.booths.insert_one(dict(new_booth))
+            booth_cache[booth_number] = new_booth
+            booths_created.append({
+                "booth_number": booth_number,
+                "name": new_booth["name"],
+                "ward": new_booth["ward"],
+                "constituency": new_booth["constituency"],
+            })
+            return new_booth
 
         for page_idx in range(total_pages):
             page_num = page_idx + 1
             page_text = ""
             used_ocr = False
 
-            # Try text extraction first (unless force_ocr)
+            # Step 1: Try text extraction first (unless force_ocr)
             if not force_ocr:
                 try:
                     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
@@ -1333,7 +1502,7 @@ async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dic
                     logger.warning(f"pdfplumber failed page {page_num}: {e}")
                     page_text = ""
 
-            # Fallback to OCR if extracted text is too sparse → likely scanned page
+            # Step 2: OCR fallback if text-layer is sparse
             if force_ocr or len(page_text.strip()) < _PDF_MIN_TEXT_CHARS_PER_PAGE:
                 try:
                     images = await _asyncio_pdf.to_thread(
@@ -1345,16 +1514,36 @@ async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dic
                         if len(ocr_text.strip()) > len(page_text.strip()):
                             page_text = ocr_text
                             used_ocr = True
+                            ocr_used_any = True
                 except Exception as e:
                     failed.append({"page": page_num, "error": f"OCR error: {str(e)[:150]}"})
                     logger.error(f"OCR exception on page {page_num}: {e}")
 
-            # Parse blocks from this page
+            # Step 3: Extract page header (Vidhan Sabha, Polling Station, Ward, Address, ...)
+            header = _parse_page_header(page_text)
+            if header:
+                headers_log.append({"page": page_num, **header})
+
+            # Step 4: Pick the booth for this page
+            page_booth = fallback_booth  # default
+            if auto_detect_booths:
+                derived_num = _build_booth_number_from_header(header)
+                if derived_num:
+                    page_booth = await _resolve_booth(derived_num, header)
+
+            # Step 5: Parse voter blocks
             page_blocks = _parse_voter_blocks(page_text)
             all_blocks += len(page_blocks)
 
             for blk in page_blocks:
                 try:
+                    if not page_booth:
+                        failed.append({
+                            "page": page_num, "name": blk.get("name", ""), "epic": blk.get("epic"),
+                            "error": "No booth resolved for this page (header missing & no fallback)",
+                        })
+                        continue
+
                     epic = blk.get("epic")
                     if epic:
                         existing = await db.voters.find_one({"voter_id_number": epic, "org_id": user["org_id"]})
@@ -1364,20 +1553,40 @@ async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dic
 
                     surname = extract_surname(blk["name"])
                     family_id = auto_family_id(blk["house_no"], surname) if blk.get("house_no") else None
+
+                    # Build a richer demography block from page header
+                    demography = {
+                        "father_husband_name": blk.get("father_husband_name"),
+                        "vidhan_sabha": header.get("vidhan_sabha_name") or "",
+                        "vidhan_sabha_no": header.get("vidhan_sabha_no") or "",
+                        "lok_sabha": header.get("lok_sabha_name") or "",
+                        "lok_sabha_no": header.get("lok_sabha_no") or "",
+                        "polling_station_no": header.get("polling_station_no") or "",
+                        "polling_station_name": header.get("polling_station_name") or "",
+                        "part_no": header.get("part_no") or "",
+                        "section_no": header.get("section_no") or "",
+                        "ward": header.get("ward") or "",
+                        "main_town": header.get("main_town") or "",
+                        "address_area": header.get("address_area") or "",
+                        "state": header.get("state") or "",
+                    }
+
                     voter_doc = {
                         "id": str(uuid.uuid4()),
-                        "booth_id": booth["id"],
+                        "booth_id": page_booth["id"],
                         "name": blk["name"],
                         "voter_id_number": epic,
                         "age": blk.get("age"),
                         "gender": blk.get("gender"),
-                        "address": blk.get("house_no", ""),
+                        "address": " · ".join(
+                            x for x in [blk.get("house_no"), demography["address_area"], demography["main_town"]] if x
+                        )[:240],
                         "phone": None, "email": None,
                         "caste": None, "religion": None, "occupation": None,
                         "political_preference": None, "sentiment": None,
                         "issues": [], "likely_to_vote": None,
                         "notes": f"Imported from PDF{' (OCR)' if used_ocr else ''} pg {page_num}",
-                        "custom_fields": {"father_husband_name": blk.get("father_husband_name")},
+                        "custom_fields": demography,
                         "org_id": user["org_id"],
                         "surname": surname,
                         "family_id": family_id,
@@ -1390,10 +1599,8 @@ async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dic
                     inserted += 1
                 except Exception as e:
                     failed.append({
-                        "page": page_num,
-                        "name": blk.get("name", ""),
-                        "epic": blk.get("epic"),
-                        "error": str(e)[:150],
+                        "page": page_num, "name": blk.get("name", ""),
+                        "epic": blk.get("epic"), "error": str(e)[:150],
                     })
 
             # Progress update after each page
@@ -1405,7 +1612,9 @@ async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dic
                     "skipped_duplicates": skipped_dup,
                     "failed_count": len(failed),
                     "blocks_detected": all_blocks,
-                    "ocr_used": used_ocr or bool(force_ocr),
+                    "ocr_used": ocr_used_any or bool(force_ocr),
+                    "booths_auto_created": booths_created,
+                    "headers_detected": headers_log[-50:],  # cap for response size
                     "updated_at": now_iso(),
                 }},
             )
@@ -1418,15 +1627,19 @@ async def _process_pdf_job(job_id: str, pdf_bytes: bytes, user: dict, booth: dic
                 "inserted": inserted,
                 "skipped_duplicates": skipped_dup,
                 "failed_count": len(failed),
-                "failed_rows": failed[:200],  # cap stored failures
+                "failed_rows": failed[:200],
                 "blocks_detected": all_blocks,
+                "booths_auto_created": booths_created,
+                "headers_detected": headers_log[-50:],
                 "completed_at": now_iso(),
             }},
         )
         await audit_log(user, "pdf_import_completed", {
             "job_id": job_id, "pages": total_pages,
             "inserted": inserted, "skipped": skipped_dup, "failed": len(failed),
-            "booth": booth.get("booth_number"),
+            "booths_created": len(booths_created),
+            "booth": (fallback_booth.get("booth_number") if fallback_booth else None),
+            "auto_detect": auto_detect_booths,
         })
     except Exception as e:
         logger.exception(f"PDF import job {job_id} crashed")
@@ -1441,31 +1654,38 @@ async def import_voters_pdf(
     file: UploadFile = File(...),
     booth_number: Optional[str] = None,
     force_ocr: bool = False,
-    user=Depends(require_roles("admin", "campaign_manager", "supervisor", "data_operator")),
+    auto_detect_booths: bool = True,
+    target_org_id: Optional[str] = None,
+    user=Depends(require_super_admin_for_org),
 ):
-    """Submit a PDF electoral roll for import.
+    """Submit a PDF electoral roll for import — SUPER-ADMIN ONLY.
        Auto-detects scanned vs text PDFs and runs Tesseract OCR (hin+eng) when needed.
+       If `auto_detect_booths=true` (default), per-page header (Vidhan Sabha, Polling Station no., Ward, Section, Address)
+       is extracted and used to auto-create booths — voters are mapped to the booth detected on their page.
+       If `booth_number` is provided, ALL voters go into that single booth (override mode).
        Returns a job_id immediately. Poll GET /import/voters-pdf/jobs/{job_id} for progress.
     """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "PDF file required")
-    if not booth_number:
-        raise HTTPException(400, "booth_number is required")
+    if not booth_number and not auto_detect_booths:
+        raise HTTPException(400, "Either booth_number must be set OR auto_detect_booths must be true")
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(400, "PDF too large (max 50 MB)")
 
-    # Resolve or auto-create booth
-    booth = await db.booths.find_one({"booth_number": booth_number, "org_id": user["org_id"]})
-    if not booth:
-        booth = {
-            "id": str(uuid.uuid4()),
-            "name": f"Booth {booth_number}", "booth_number": booth_number,
-            "ward": "Imported", "constituency": "", "location": "",
-            "target_voters": 0, "supervisor_id": None, "assigned_workers": [],
-            "org_id": user["org_id"], "created_at": now_iso(),
-        }
-        await db.booths.insert_one(dict(booth))
+    # Resolve or auto-create booth (only when explicit booth_number is given — else per-page detection takes over)
+    booth = None
+    if booth_number:
+        booth = await db.booths.find_one({"booth_number": booth_number, "org_id": user["org_id"]})
+        if not booth:
+            booth = {
+                "id": str(uuid.uuid4()),
+                "name": f"Booth {booth_number}", "booth_number": booth_number,
+                "ward": "Imported", "constituency": "", "location": "",
+                "target_voters": 0, "supervisor_id": None, "assigned_workers": [],
+                "org_id": user["org_id"], "created_at": now_iso(),
+            }
+            await db.booths.insert_one(dict(booth))
 
     job_id = str(uuid.uuid4())
     job_doc = {
@@ -1474,8 +1694,9 @@ async def import_voters_pdf(
         "user_id": user["id"],
         "filename": file.filename,
         "size_bytes": len(content),
-        "booth_id": booth["id"],
+        "booth_id": booth["id"] if booth else None,
         "booth_number": booth_number,
+        "auto_detect_booths": bool(auto_detect_booths and not booth_number),
         "force_ocr": bool(force_ocr),
         "status": "queued",
         "total_pages": 0,
@@ -1485,19 +1706,30 @@ async def import_voters_pdf(
         "failed_count": 0,
         "blocks_detected": 0,
         "ocr_used": False,
+        "booths_auto_created": [],
+        "headers_detected": [],
         "failed_rows": [],
         "created_at": now_iso(),
     }
     await db.pdf_import_jobs.insert_one(job_doc)
 
     # Fire background task — don't await
-    _asyncio_pdf.create_task(_process_pdf_job(job_id, content, user, booth, force_ocr=force_ocr))
+    _asyncio_pdf.create_task(_process_pdf_job(
+        job_id, content, user, booth,
+        force_ocr=force_ocr,
+        auto_detect_booths=bool(auto_detect_booths and not booth_number),
+    ))
 
-    return {"job_id": job_id, "status": "queued", "booth_id": booth["id"], "filename": file.filename}
+    return {
+        "job_id": job_id, "status": "queued",
+        "booth_id": booth["id"] if booth else None,
+        "filename": file.filename,
+        "auto_detect_booths": bool(auto_detect_booths and not booth_number),
+    }
 
 
 @api.get("/import/voters-pdf/jobs/{job_id}")
-async def get_pdf_import_job(job_id: str, user=Depends(get_current_user)):
+async def get_pdf_import_job(job_id: str, target_org_id: Optional[str] = None, user=Depends(require_super_admin_for_org)):
     job = await db.pdf_import_jobs.find_one({"id": job_id, "org_id": user["org_id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -1509,8 +1741,11 @@ async def get_pdf_import_job(job_id: str, user=Depends(get_current_user)):
 
 
 @api.get("/import/voters-pdf/jobs")
-async def list_pdf_import_jobs(user=Depends(require_roles("admin", "campaign_manager", "supervisor", "data_operator")),
-                                limit: int = 20):
+async def list_pdf_import_jobs(
+    target_org_id: Optional[str] = None,
+    user=Depends(require_super_admin_for_org),
+    limit: int = 20,
+):
     jobs = await db.pdf_import_jobs.find(
         {"org_id": user["org_id"]},
         {"_id": 0, "failed_rows": 0},
