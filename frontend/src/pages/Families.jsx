@@ -127,7 +127,12 @@ export default function FamiliesPage() {
                     >
                       <div className="flex items-center gap-2">
                         <Users className="h-3.5 w-3.5 text-slate-400" />
-                        <span className="text-sm font-medium text-slate-800">{m.name}</span>
+                        <span className="text-sm font-medium text-slate-800">
+                          {m.name}
+                          {m.name_en && m.name_en !== m.name && (
+                            <span className="ml-1.5 font-normal text-xs text-slate-400">({m.name_en})</span>
+                          )}
+                        </span>
                         <span className="text-xs text-slate-500">· {m.age || "?"}y · {m.gender || "?"}</span>
                       </div>
                       {m.political_preference && (

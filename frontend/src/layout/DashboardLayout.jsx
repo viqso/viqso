@@ -15,6 +15,8 @@ import {
   Upload,
   Tv,
   ScrollText,
+  Vote,
+  Send,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Avatar, AvatarFallback } from "../components/ui/avatar";
@@ -26,6 +28,8 @@ const navItems = [
   { to: "/booths", label: "Booths", icon: MapPin, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent", "viewer"] },
   { to: "/voters", label: "Voters", icon: Users, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent", "viewer", "data_operator"] },
   { to: "/survey/new", label: "New Survey", icon: ClipboardList, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker", "survey_agent"] },
+  { to: "/polling-day", label: "Polling Day", icon: Vote, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker"] },
+  { to: "/broadcast", label: "Broadcast Center", icon: Send, roles: ["admin", "campaign_manager"] },
   { to: "/segregate", label: "Segregate", icon: Layers, roles: ["admin", "campaign_manager", "supervisor", "viewer"] },
   { to: "/families", label: "Families", icon: Home, roles: ["admin", "campaign_manager", "supervisor", "viewer"] },
   { to: "/visits", label: "Visits", icon: CalendarCheck, roles: ["admin", "campaign_manager", "supervisor", "booth_president", "worker"] },

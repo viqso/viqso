@@ -138,7 +138,12 @@ export default function VotersPage() {
                   data-testid={`voter-row-${v.id}`}
                 >
                   <td className="px-4 py-3">
-                    <div className="font-medium text-slate-900">{v.name}</div>
+                    <div className="font-medium text-slate-900">
+                      {v.name}
+                      {v.name_en && v.name_en !== v.name && (
+                        <span className="ml-2 font-normal text-xs text-slate-500">({v.name_en})</span>
+                      )}
+                    </div>
                     <div className="font-mono text-[11px] text-slate-500">{v.voter_id_number}</div>
                   </td>
                   <td className="px-4 py-3 text-slate-700">

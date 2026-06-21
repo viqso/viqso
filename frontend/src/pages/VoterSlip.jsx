@@ -146,14 +146,29 @@ export default function VoterSlipPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Voter Name" value={voter.name} bold />
+            <Field 
+              label="Voter Name" 
+              value={
+                voter.name_en && voter.name_en !== voter.name 
+                  ? `${voter.name} (${voter.name_en})` 
+                  : voter.name
+              } 
+              bold 
+            />
             <Field label="Voter ID (EPIC)" value={voter.voter_id_number || "—"} mono />
             <Field label="Age" value={voter.age || "—"} />
             <Field label="Gender" value={voter.gender || "—"} cap />
             <Field label="Father / Spouse" value={voter.custom_fields?.father_name || "—"} />
             <Field label="Contact" value={voter.phone || "—"} mono />
             <div className="sm:col-span-2">
-              <Field label="Residential Address" value={voter.address || "—"} />
+              <Field 
+                label="Residential Address" 
+                value={
+                  voter.address_en && voter.address_en !== voter.address 
+                    ? `${voter.address} (${voter.address_en})` 
+                    : voter.address
+                } 
+              />
             </div>
           </div>
 

@@ -21,6 +21,9 @@ import SuperAdminPage from "./pages/SuperAdmin";
 import VoterSlipPage from "./pages/VoterSlip";
 import WarRoomPage from "./pages/WarRoom";
 import AuditLogsPage from "./pages/AuditLogs";
+import PollingDayPage from "./pages/PollingDay";
+import BroadcastPage from "./pages/Broadcast";
+import BulkPrintSlipsPage from "./pages/BulkPrintSlips";
 
 const ProtectedRoute = ({ children, roles }) => {
   const { user, loading } = useAuth();
@@ -51,6 +54,11 @@ function App() {
                   <VoterSlipPage />
                 </ProtectedRoute>
               } />
+              <Route path="/booths/:boothId/bulk-slips" element={
+                <ProtectedRoute>
+                  <BulkPrintSlipsPage />
+                </ProtectedRoute>
+              } />
               <Route
                 path="/"
                 element={
@@ -69,6 +77,8 @@ function App() {
                 <Route path="visits" element={<VisitsPage />} />
                 <Route path="segregate" element={<SegregatePage />} />
                 <Route path="families" element={<FamiliesPage />} />
+                <Route path="polling-day" element={<PollingDayPage />} />
+                <Route path="broadcast" element={<BroadcastPage />} />
                 <Route path="analytics" element={<AnalyticsPage />} />
                 <Route
                   path="war-room"

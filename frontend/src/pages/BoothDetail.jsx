@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { ArrowLeft, MapPin, Users, Target, ClipboardList } from "lucide-react";
+import { ArrowLeft, MapPin, Users, Target, ClipboardList, Printer } from "lucide-react";
 
 export default function BoothDetailPage() {
   const { id } = useParams();
@@ -36,9 +36,14 @@ export default function BoothDetailPage() {
             <MapPin className="h-3.5 w-3.5" /> {booth.ward} · {booth.constituency}
           </div>
         </div>
-        <Button onClick={() => navigate(`/survey/new?booth_id=${id}`)} className="bg-blue-600 text-white hover:bg-blue-700">
-          <ClipboardList className="mr-2 h-4 w-4" /> New Survey
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => navigate(`/booths/${id}/bulk-slips`)} variant="outline" className="border-slate-300 bg-white hover:bg-slate-50">
+            <Printer className="mr-2 h-4 w-4" /> Bulk Slips
+          </Button>
+          <Button onClick={() => navigate(`/survey/new?booth_id=${id}`)} className="bg-blue-600 text-white hover:bg-blue-700">
+            <ClipboardList className="mr-2 h-4 w-4" /> New Survey
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

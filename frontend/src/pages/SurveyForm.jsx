@@ -100,20 +100,44 @@ export default function SurveyFormPage() {
       return;
     }
     setSubmitting(true);
-    try {
-      const payload = { ...form, age: form.age ? Number(form.age) : null };
-      if (isEdit) {
-        await api.patch(`/voters/${id}`, payload);
-        toast.success("Survey updated");
-      } else {
-        await api.post("/voters", payload);
-        toast.success("Survey saved");
+
+    const saveSurvey = async (latitude = null, longitude = null) => {
+      try {
+        const payload = { 
+          ...form, 
+          age: form.age ? Number(form.age) : null,
+          latitude,
+          longitude
+        };
+        if (isEdit) {
+          await api.patch(`/voters/${id}`, payload);
+          toast.success("Survey updated");
+        } else {
+          await api.post("/voters", payload);
+          toast.success("Survey saved");
+        }
+        navigate("/voters");
+      } catch (err) {
+        toast.error("Failed to save survey");
+      } finally {
+        setSubmitting(false);
       }
-      navigate("/voters");
-    } catch (err) {
-      toast.error("Failed to save survey");
-    } finally {
-      setSubmitting(false);
+    };
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          saveSurvey(latitude, longitude);
+        },
+        (error) => {
+          console.warn("Geolocation blocked or failed:", error);
+          saveSurvey(null, null);
+        },
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    } else {
+      saveSurvey(null, null);
     }
   };
 
